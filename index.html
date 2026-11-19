@@ -374,11 +374,8 @@
   <div class="app" id="app"></div>
 
   <script>
-    const STORAGE_KEY = "manga_tracker_gsheets_v1";
-    // Поменяйте пароль на свой перед отправкой руководству:
+    const STORAGE_KEY = "manga_tracker_gsheets_v2";
     const LEAD_PASSCODE = "renaissera";
-
-    // Вставьте сюда ссылку веб-приложения Google Apps Script (.../exec):
     const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwpv6iKuaDlSWm7zS6qu6waejWIUI5jLPc6tQ5gLSqLOZbRSCZgryKvan1DHZFpOF4Y/exec";
 
     const PROJECT_STATUSES = {
@@ -387,14 +384,58 @@
       dropped: "Брошено"
     };
 
+    const WORKFLOW_MODES = {
+      classic: {
+        label: "Классический",
+        deps: {
+          clean: [],
+          translate: [],
+          edit: ["translate"],
+          sound: ["translate", "clean"],
+          typeset: ["edit", "sound"],
+          beta: ["typeset"]
+        }
+      },
+      typeset_first: {
+        label: "Тайп перед звуком",
+        deps: {
+          clean: [],
+          translate: [],
+          edit: ["translate"],
+          typeset: ["edit", "clean"],
+          sound: ["typeset"],
+          beta: ["sound"]
+        }
+      },
+      parallel: {
+        label: "Параллельно",
+        deps: {
+          clean: [],
+          translate: [],
+          edit: ["translate"],
+          typeset: ["edit", "clean"],
+          sound: ["translate", "clean"],
+          beta: ["typeset", "sound"]
+        }
+      }
+    };
+
     const ROLES = [
-      { id: "clean", name: "Клин", deps: [] },
-      { id: "translate", name: "Перевод", deps: [] },
-      { id: "edit", name: "Редактура", deps: ["translate"] },
-      { id: "sound", name: "Звук", deps: ["translate", "clean"] },
-      { id: "typeset", name: "Тайп", deps: ["edit", "sound"] },
-      { id: "beta", name: "Бета", deps: ["typeset"] }
+      { id: "clean", name: "Клин" },
+      { id: "translate", name: "Перевод" },
+      { id: "edit", name: "Редактура" },
+      { id: "sound", name: "Звук" },
+      { id: "typeset", name: "Тайп" },
+      { id: "beta", name: "Бета" }
     ];
+
+    function getCurrentUserKey() {
+      const tgUser = window.Telegram?.WebApp?.initDataUnsafe?.user;
+      if (tgUser && tgUser.id) {
+        return `tg_${tgUser.id}`;
+      }
+      return "local_guest";
+    }
 
     function makeDoneMap(partial = {}) {
       return {
@@ -419,22 +460,20 @@
     }
 
     const DEFAULT_STATE = {
-      mode: "member", // "member" | "lead"
+      mode: "member",
       leadUnlocked: false,
       showLeadAuthPrompt: false,
       leadAuthError: false,
       confirmDeleteProjectId: null,
       selectedProjectId: "lotus",
       selectedRoleId: "edit",
-      boundRolesByProject: {
-        lotus: ["edit"],
-        snow: ["translate"]
-      },
+      userBoundRoles: {},
       projects: {
         lotus: {
           id: "lotus",
           name: "Лотос",
           status: "active",
+          workflowMode: "classic",
           note: "Пачки по 2 главы · Клин/Перевод: ср–пт · Редактура/Звук: сб–пн · Тайп: вт–чт · Бета: пт–сб",
           chapters: [
             {
@@ -471,6 +510,7 @@
           id: "snow",
           name: "Снег",
           status: "active",
+          workflowMode: "classic",
           note: "По 1 главе · Без дедлайна · Внештатная 4-я глава оставлена для контроля",
           chapters: [
             {
@@ -515,16 +555,56 @@
 
     let syncStatus = GOOGLE_SCRIPT_URL ? "подключение к Google Таблице..." : "укажите GOOGLE_SCRIPT_URL в коде";
 
+    function normalizeProjectsMap(rawProjects) {
+      const source = rawProjects || structuredClone(DEFAULT_STATE.projects);
+      const normalized = {};
+      Object.entries(source).forEach(([key, proj]) => {
+        if (!proj) return;
+        const wf = WORKFLOW_MODES[proj.workflowMode] ? proj.workflowMode : "classic";
+        normalized[key] = {
+          ...proj,
+          status: proj.status || "active",
+          workflowMode: wf,
+          chapters: Array.isArray(proj.chapters) ? proj.chapters : []
+        };
+      });
+      return normalized;
+    }
+
+    function normalizeUserBoundRoles(rawMap) {
+      const cleanMap = {};
+      if (!rawMap || typeof rawMap !== "object") return cleanMap;
+      Object.entries(rawMap).forEach(([userKey, byProj]) => {
+        if (!byProj || typeof byProj !== "object") return;
+        cleanMap[userKey] = {};
+        Object.entries(byProj).forEach(([projId, rolesArr]) => {
+          cleanMap[userKey][projId] = Array.isArray(rolesArr) ? [...new Set(rolesArr)] : [];
+        });
+      });
+      return cleanMap;
+    }
+
+    function getBoundRolesForUser(userBoundRoles, userKey, projectId) {
+      if (!projectId) return [];
+      const userObj = userBoundRoles && userBoundRoles[userKey];
+      if (!userObj || !Array.isArray(userObj[projectId])) return [];
+      return [...new Set(userObj[projectId])];
+    }
+
+    function setBoundRolesForUser(userBoundRoles, userKey, projectId, rolesList) {
+      const next = normalizeUserBoundRoles(userBoundRoles);
+      if (!next[userKey]) next[userKey] = {};
+      next[userKey][projectId] = [...new Set(rolesList)];
+      return next;
+    }
+
     function normalizeLoadedState(parsed) {
       const merged = {
         ...structuredClone(DEFAULT_STATE),
         ...(parsed || {}),
         confirmDeleteProjectId: null,
-        boundRolesByProject: {
-          ...structuredClone(DEFAULT_STATE.boundRolesByProject),
-          ...((parsed && parsed.boundRolesByProject) || {})
-        },
-        projects: (parsed && parsed.projects) || structuredClone(DEFAULT_STATE.projects)
+        userBoundRoles: normalizeUserBoundRoles(parsed && parsed.userBoundRoles),
+        projects: normalizeProjectsMap(parsed && parsed.projects)
       };
       if (merged.mode === "lead" && !merged.leadUnlocked) {
         merged.mode = "member";
@@ -554,7 +634,7 @@
     function getSharedPayload() {
       return {
         selectedProjectId: state.selectedProjectId,
-        boundRolesByProject: state.boundRolesByProject,
+        userBoundRoles: state.userBoundRoles,
         projects: state.projects
       };
     }
@@ -600,10 +680,22 @@
         }
         if (data.state) {
           const remote = data.state;
+          const userKey = getCurrentUserKey();
+          const remoteUserMap = normalizeUserBoundRoles(remote.userBoundRoles);
+          const mergedUserMap = normalizeUserBoundRoles(state.userBoundRoles);
+
+          Object.entries(remoteUserMap).forEach(([uKey, projMap]) => {
+            if (uKey === userKey) {
+              mergedUserMap[uKey] = projMap;
+            } else {
+              mergedUserMap[uKey] = projMap;
+            }
+          });
+
           state = normalizeLoadedState({
             ...state,
             selectedProjectId: remote.selectedProjectId || state.selectedProjectId,
-            boundRolesByProject: remote.boundRolesByProject || state.boundRolesByProject,
+            userBoundRoles: mergedUserMap,
             projects: remote.projects || state.projects
           });
           saveLocalState();
@@ -666,28 +758,38 @@
       return ROLES.find((r) => r.id === roleId) || ROLES[0];
     }
 
+    function getWorkflowMode(project) {
+      const code = (project && project.workflowMode) || "classic";
+      return WORKFLOW_MODES[code] || WORKFLOW_MODES.classic;
+    }
+
+    function getRoleDeps(project, roleId) {
+      const wf = getWorkflowMode(project);
+      return wf.deps[roleId] || [];
+    }
+
     function isProjectActive(project) {
       return (project.status || "active") === "active";
     }
 
-    function getMissingDeps(chapter, roleId) {
-      const role = getRole(roleId);
-      return role.deps.filter((depId) => !chapter.done[depId]);
+    function getMissingDeps(project, chapter, roleId) {
+      const deps = getRoleDeps(project, roleId);
+      return deps.filter((depId) => !chapter.done[depId]);
     }
 
-    function isUnlockedForRole(chapter, roleId) {
-      return getMissingDeps(chapter, roleId).length === 0;
+    function isUnlockedForRole(project, chapter, roleId) {
+      return getMissingDeps(project, chapter, roleId).length === 0;
     }
 
     function toggleRoleBinding(projectId, roleId) {
       const project = state.projects[projectId];
       if (!project || !isProjectActive(project)) return;
-      const list = state.boundRolesByProject[projectId] || [];
-      if (list.includes(roleId)) {
-        state.boundRolesByProject[projectId] = list.filter((id) => id !== roleId);
-      } else {
-        state.boundRolesByProject[projectId] = [...list, roleId];
-      }
+      const userKey = getCurrentUserKey();
+      const list = getBoundRolesForUser(state.userBoundRoles, userKey, projectId);
+      const nextList = list.includes(roleId)
+        ? list.filter((id) => id !== roleId)
+        : [...list, roleId];
+      state.userBoundRoles = setBoundRolesForUser(state.userBoundRoles, userKey, projectId, nextList);
       saveState(true);
       render();
     }
@@ -697,7 +799,7 @@
       if (!project || !isProjectActive(project)) return;
       const ch = project.chapters.find((c) => c.id === chapterId);
       if (!ch) return;
-      if (value && !isUnlockedForRole(ch, roleId)) return;
+      if (value && !isUnlockedForRole(project, ch, roleId)) return;
       ch.done[roleId] = Boolean(value);
       saveState(true);
       render();
@@ -715,6 +817,16 @@
       render();
     }
 
+    function setProjectWorkflowMode(projectId, nextMode) {
+      if (!state.leadUnlocked) return;
+      const project = state.projects[projectId];
+      if (!project || !isProjectActive(project)) return;
+      if (!WORKFLOW_MODES[nextMode]) return;
+      project.workflowMode = nextMode;
+      saveState(true);
+      render();
+    }
+
     function createProject(name, note) {
       if (!state.leadUnlocked) return;
       const cleanName = (name || "").trim();
@@ -724,10 +836,10 @@
         id,
         name: cleanName,
         status: "active",
+        workflowMode: "classic",
         note: (note || "").trim() || "Новый проект · Статус: В работе",
         chapters: []
       };
-      state.boundRolesByProject[id] = [];
       state.selectedProjectId = id;
       state.confirmDeleteProjectId = null;
       saveState(true);
@@ -753,7 +865,11 @@
       if (ids.length <= 1 || !state.projects[projectId]) return;
 
       delete state.projects[projectId];
-      delete state.boundRolesByProject[projectId];
+      Object.keys(state.userBoundRoles).forEach((uKey) => {
+        if (state.userBoundRoles[uKey]) {
+          delete state.userBoundRoles[uKey][projectId];
+        }
+      });
       state.confirmDeleteProjectId = null;
 
       if (state.selectedProjectId === projectId) {
@@ -840,10 +956,13 @@
         state.selectedProjectId = project.id;
       }
 
+      const userKey = getCurrentUserKey();
       const currentRole = getRole(state.selectedRoleId);
-      const boundRoles = project ? (state.boundRolesByProject[project.id] || []) : [];
+      const boundRoles = project ? getBoundRolesForUser(state.userBoundRoles, userKey, project.id) : [];
       const activeProject = project ? isProjectActive(project) : false;
       const statusLabel = project ? (PROJECT_STATUSES[project.status || "active"] || "В работе") : "";
+      const workflow = project ? getWorkflowMode(project) : WORKFLOW_MODES.classic;
+      const currentRoleDeps = project ? getRoleDeps(project, currentRole.id) : [];
       const canDeleteProject = projectList.length > 1 && Boolean(project);
 
       const tgUser = window.Telegram?.WebApp?.initDataUnsafe?.user;
@@ -899,6 +1018,7 @@
             </div>
             <div class="row">
               <span class="badge ${activeProject ? "ok" : "closed"}">Статус: ${statusLabel}</span>
+              <span class="badge">Порядок: ${workflow.label}</span>
               <span class="sub">${project.note}</span>
             </div>
           </div>
@@ -935,7 +1055,7 @@
             html += `<div class="panel"><div class="sub">Глав пока нет.</div></div>`;
           } else {
             project.chapters.forEach((ch) => {
-              const missing = getMissingDeps(ch, currentRole.id);
+              const missing = getMissingDeps(project, ch, currentRole.id);
               const unlocked = missing.length === 0;
               const isDone = Boolean(ch.done[currentRole.id]);
               const roleDeadline = (ch.roleDeadlines && ch.roleDeadlines[currentRole.id]) || "";
@@ -971,8 +1091,8 @@
                   </div>
                   <div class="meta-line">
                     ${
-                      currentRole.deps.length
-                        ? `Зависимости роли «${currentRole.name}»: ${currentRole.deps.map((d) => getRole(d).name).join(" + ")}`
+                      currentRoleDeps.length
+                        ? `Зависимости роли «${currentRole.name}»: ${currentRoleDeps.map((d) => getRole(d).name).join(" + ")}`
                         : `Роль «${currentRole.name}» не ждёт предыдущих этапов`
                     }
                   </div>
@@ -1004,7 +1124,7 @@
                   <span class="badge ${activeProject ? "ok" : "closed"}">${statusLabel}</span>
                 </div>
                 <div class="row">
-                  <span class="label-inline">Статус проекта:</span>
+                  <span class="label-inline">Статус:</span>
                   <select onchange="setProjectStatus('${project.id}', this.value)">
                     <option value="active" ${(project.status || "active") === "active" ? "selected" : ""}>В работе</option>
                     <option value="completed" ${project.status === "completed" ? "selected" : ""}>Завершено</option>
@@ -1018,6 +1138,15 @@
                     Удалить проект
                   </button>
                 </div>
+              </div>
+
+              <div class="row" style="margin-bottom: 10px;">
+                <span class="label-inline">Порядок звука и тайпа:</span>
+                <select ${!activeProject ? "disabled" : ""} onchange="setProjectWorkflowMode('${project.id}', this.value)">
+                  ${Object.entries(WORKFLOW_MODES).map(([key, cfg]) => `
+                    <option value="${key}" ${(project.workflowMode || "classic") === key ? "selected" : ""}>${cfg.label}</option>
+                  `).join("")}
+                </select>
               </div>
 
               ${
