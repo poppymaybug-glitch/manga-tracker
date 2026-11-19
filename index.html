@@ -1,0 +1,1012 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Трекер глав — Команда перевода</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    :root {
+      --bg: #0f1115;
+      --surface: #181b22;
+      --surface-2: #202530;
+      --border: #2c3342;
+      --text: #eef1f6;
+      --muted: #9aa3b2;
+      --accent: #6c8cff;
+      --ok: #2ecc71;
+      --ok-bg: rgba(46, 204, 113, 0.14);
+      --warn: #f39c12;
+      --warn-bg: rgba(243, 156, 18, 0.14);
+      --danger: #e74c3c;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      padding: 16px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.45;
+    }
+
+    .app {
+      max-width: 820px;
+      margin: 0 auto;
+    }
+
+    .topbar {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 14px;
+      padding: 12px 14px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+    }
+
+    .topbar h1 {
+      margin: 0;
+      font-size: 18px;
+    }
+
+    .sub {
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .mode-switch {
+      display: flex;
+      gap: 6px;
+      background: var(--surface-2);
+      padding: 4px;
+      border-radius: 10px;
+      align-items: center;
+    }
+
+    button {
+      cursor: pointer;
+      border: 1px solid var(--border);
+      background: var(--surface-2);
+      color: var(--text);
+      border-radius: 8px;
+      padding: 7px 12px;
+      font-size: 13px;
+      font-weight: 500;
+      transition: 0.15s ease;
+    }
+
+    button:hover:not(:disabled) {
+      border-color: var(--accent);
+    }
+
+    button:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+
+    button.active {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+    }
+
+    button.btn-done {
+      background: var(--ok);
+      border-color: var(--ok);
+      color: #0b1910;
+      font-weight: 600;
+    }
+
+    button.btn-reopen {
+      background: transparent;
+      border-color: var(--warn);
+      color: var(--warn);
+    }
+
+    button.btn-danger {
+      background: transparent;
+      border-color: var(--danger);
+      color: var(--danger);
+    }
+
+    button.btn-small {
+      padding: 4px 9px;
+      font-size: 12px;
+    }
+
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px;
+      margin-bottom: 14px;
+    }
+
+    .panel.archived,
+    .chapter-card.archived {
+      opacity: 0.58;
+      background: #14171d;
+      border-style: dashed;
+    }
+
+    .row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .label-inline {
+      font-size: 13px;
+      color: var(--muted);
+      margin-right: 4px;
+    }
+
+    .role-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .role-chip.bound::after {
+      content: "★";
+      font-size: 11px;
+      color: #ffd166;
+    }
+
+    .chapter-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px 14px;
+      margin-bottom: 10px;
+    }
+
+    .chapter-card.locked {
+      opacity: 0.55;
+      background: #14171d;
+      border-style: dashed;
+    }
+
+    .chapter-head {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .chapter-title {
+      font-size: 15px;
+      font-weight: 700;
+    }
+
+    .badge {
+      font-size: 12px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--surface-2);
+      color: var(--muted);
+    }
+
+    .badge.ok {
+      color: var(--ok);
+      border-color: rgba(46, 204, 113, 0.35);
+      background: var(--ok-bg);
+    }
+
+    .badge.work {
+      color: var(--warn);
+      border-color: rgba(243, 156, 18, 0.35);
+      background: var(--warn-bg);
+    }
+
+    .badge.closed {
+      color: #c2c8d4;
+      border-color: #424a5c;
+      background: #232833;
+    }
+
+    .badge.err {
+      color: #ff8a80;
+      border-color: rgba(231, 76, 60, 0.45);
+      background: rgba(231, 76, 60, 0.14);
+    }
+
+    .meta-line {
+      margin-top: 6px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .roles-summary {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 10px;
+    }
+
+    .role-mini {
+      font-size: 12px;
+      padding: 4px 8px;
+      border-radius: 7px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+    }
+
+    .role-mini.done {
+      border-color: rgba(46, 204, 113, 0.45);
+      color: #a7f3c5;
+      background: rgba(46, 204, 113, 0.1);
+    }
+
+    .editor-box {
+      margin-top: 12px;
+      border-top: 1px solid var(--border);
+      background: var(--surface-2);
+      padding: 12px;
+      border-radius: 10px;
+    }
+
+    .grid-roles {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 8px;
+      margin: 10px 0;
+    }
+
+    .role-dl-item {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    .role-dl-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    input[type="text"], input[type="password"], select {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 7px;
+      padding: 6px 8px;
+      font-size: 13px;
+      width: 100%;
+    }
+
+    select {
+      width: auto;
+      min-width: 150px;
+    }
+
+    input.compact {
+      width: auto;
+      min-width: 140px;
+    }
+
+    .add-form {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .hint {
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 8px;
+    }
+  </style>
+</head>
+<body>
+  <div class="app" id="app"></div>
+
+  <script>
+    const STORAGE_KEY = "manga_tracker_gsheets_v1";
+    // Поменяйте пароль на свой перед отправкой руководству:
+    const LEAD_PASSCODE = "lead2026";
+
+    // Вставьте сюда ссылку веб-приложения Google Apps Script (.../exec):
+    const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwpv6iKuaDlSWm7zS6qu6waejWIUI5jLPc6tQ5gLSqLOZbRSCZgryKvan1DHZFpOF4Y/exec";
+
+    const PROJECT_STATUSES = {
+      active: "В работе",
+      completed: "Завершено",
+      dropped: "Брошено"
+    };
+
+    const ROLES = [
+      { id: "clean", name: "Клин", deps: [] },
+      { id: "translate", name: "Перевод", deps: [] },
+      { id: "edit", name: "Редактура", deps: ["translate"] },
+      { id: "sound", name: "Звук", deps: ["translate", "clean"] },
+      { id: "typeset", name: "Тайп", deps: ["edit", "sound"] },
+      { id: "beta", name: "Бета", deps: ["typeset"] }
+    ];
+
+    function makeDoneMap(partial = {}) {
+      return {
+        clean: Boolean(partial.clean),
+        translate: Boolean(partial.translate),
+        edit: Boolean(partial.edit),
+        sound: Boolean(partial.sound),
+        typeset: Boolean(partial.typeset),
+        beta: Boolean(partial.beta)
+      };
+    }
+
+    function makeDeadlinesMap(partial = {}) {
+      return {
+        clean: partial.clean || "",
+        translate: partial.translate || "",
+        edit: partial.edit || "",
+        sound: partial.sound || "",
+        typeset: partial.typeset || "",
+        beta: partial.beta || ""
+      };
+    }
+
+    const DEFAULT_STATE = {
+      mode: "member", // "member" | "lead"
+      leadUnlocked: false,
+      showLeadAuthPrompt: false,
+      leadAuthError: false,
+      selectedProjectId: "lotus",
+      selectedRoleId: "edit",
+      boundRolesByProject: {
+        lotus: ["edit"],
+        snow: ["translate"]
+      },
+      projects: {
+        lotus: {
+          id: "lotus",
+          name: "Лотос",
+          status: "active",
+          note: "Пачки по 2 главы · Клин/Перевод: ср–пт · Редактура/Звук: сб–пн · Тайп: вт–чт · Бета: пт–сб",
+          chapters: [
+            {
+              id: "lotus-117",
+              label: "117",
+              done: makeDoneMap({ clean: true, translate: true }),
+              roleDeadlines: makeDeadlinesMap({ edit: "23.11", sound: "23.11" }),
+              isEditing: false
+            },
+            {
+              id: "lotus-118",
+              label: "118",
+              done: makeDoneMap({ clean: true, translate: true }),
+              roleDeadlines: makeDeadlinesMap({ edit: "23.11", sound: "23.11" }),
+              isEditing: false
+            },
+            {
+              id: "lotus-119",
+              label: "119",
+              done: makeDoneMap({ clean: true }),
+              roleDeadlines: makeDeadlinesMap({}),
+              isEditing: false
+            },
+            {
+              id: "lotus-120",
+              label: "120",
+              done: makeDoneMap({ clean: true }),
+              roleDeadlines: makeDeadlinesMap({}),
+              isEditing: false
+            }
+          ]
+        },
+        snow: {
+          id: "snow",
+          name: "Снег",
+          status: "active",
+          note: "По 1 главе · Без дедлайна · Внештатная 4-я глава оставлена для контроля",
+          chapters: [
+            {
+              id: "snow-4",
+              label: "4 (отстаёт)",
+              done: makeDoneMap({}),
+              roleDeadlines: makeDeadlinesMap({}),
+              isEditing: false
+            },
+            {
+              id: "snow-5",
+              label: "5",
+              done: makeDoneMap({ clean: true, translate: true }),
+              roleDeadlines: makeDeadlinesMap({}),
+              isEditing: false
+            },
+            {
+              id: "snow-6",
+              label: "6",
+              done: makeDoneMap({ clean: true, translate: true }),
+              roleDeadlines: makeDeadlinesMap({}),
+              isEditing: false
+            },
+            {
+              id: "snow-7",
+              label: "7",
+              done: makeDoneMap({ clean: true, translate: true }),
+              roleDeadlines: makeDeadlinesMap({}),
+              isEditing: false
+            },
+            {
+              id: "snow-8",
+              label: "8",
+              done: makeDoneMap({ clean: true }),
+              roleDeadlines: makeDeadlinesMap({}),
+              isEditing: false
+            }
+          ]
+        }
+      }
+    };
+
+    let syncStatus = GOOGLE_SCRIPT_URL ? "подключение к Google Таблице..." : "укажите GOOGLE_SCRIPT_URL в коде";
+
+    function normalizeLoadedState(parsed) {
+      const merged = {
+        ...structuredClone(DEFAULT_STATE),
+        ...(parsed || {}),
+        boundRolesByProject: {
+          ...structuredClone(DEFAULT_STATE.boundRolesByProject),
+          ...((parsed && parsed.boundRolesByProject) || {})
+        },
+        projects: (parsed && parsed.projects) || structuredClone(DEFAULT_STATE.projects)
+      };
+      if (merged.mode === "lead" && !merged.leadUnlocked) {
+        merged.mode = "member";
+      }
+      return merged;
+    }
+
+    function loadLocalState() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (!raw) return structuredClone(DEFAULT_STATE);
+        return normalizeLoadedState(JSON.parse(raw));
+      } catch (e) {
+        return structuredClone(DEFAULT_STATE);
+      }
+    }
+
+    let state = loadLocalState();
+
+    function saveLocalState() {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      } catch (e) {}
+    }
+
+    function getSharedPayload() {
+      return {
+        selectedProjectId: state.selectedProjectId,
+        boundRolesByProject: state.boundRolesByProject,
+        projects: state.projects
+      };
+    }
+
+    async function pushSharedState() {
+      if (!GOOGLE_SCRIPT_URL) return;
+      syncStatus = "сохранение в Google Таблицу...";
+      render();
+      try {
+        const res = await fetch(GOOGLE_SCRIPT_URL, {
+          method: "POST",
+          headers: {
+            "Content-Type": "text/plain;charset=utf-8"
+          },
+          body: JSON.stringify({ state: getSharedPayload() })
+        });
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}`);
+        }
+        const data = await res.json();
+        if (!data || !data.ok) {
+          throw new Error((data && data.error) || "Ошибка записи");
+        }
+        syncStatus = "сохранено в Google Таблицу";
+      } catch (err) {
+        syncStatus = "ошибка записи в таблицу (сохранено локально)";
+      }
+      render();
+    }
+
+    async function pullSharedState() {
+      if (!GOOGLE_SCRIPT_URL) return;
+      syncStatus = "загрузка из Google Таблицы...";
+      render();
+      try {
+        const res = await fetch(`${GOOGLE_SCRIPT_URL}?t=${Date.now()}`);
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}`);
+        }
+        const data = await res.json();
+        if (!data || !data.ok) {
+          throw new Error((data && data.error) || "Ошибка чтения");
+        }
+        if (data.state) {
+          const remote = data.state;
+          state = normalizeLoadedState({
+            ...state,
+            selectedProjectId: remote.selectedProjectId || state.selectedProjectId,
+            boundRolesByProject: remote.boundRolesByProject || state.boundRolesByProject,
+            projects: remote.projects || state.projects
+          });
+          saveLocalState();
+          syncStatus = "Google Таблица подключена";
+        } else {
+          await pushSharedState();
+        }
+      } catch (err) {
+        syncStatus = "ошибка чтения таблицы (работает локально)";
+      }
+      render();
+    }
+
+    function saveState(syncShared = true) {
+      saveLocalState();
+      if (syncShared) {
+        pushSharedState();
+      }
+    }
+
+    function openLeadTab() {
+      if (state.leadUnlocked) {
+        state.mode = "lead";
+        state.showLeadAuthPrompt = false;
+        state.leadAuthError = false;
+        saveState(false);
+        render();
+        return;
+      }
+      state.showLeadAuthPrompt = true;
+      state.leadAuthError = false;
+      render();
+    }
+
+    function submitLeadPasscode(code) {
+      if ((code || "").trim() === LEAD_PASSCODE) {
+        state.leadUnlocked = true;
+        state.mode = "lead";
+        state.showLeadAuthPrompt = false;
+        state.leadAuthError = false;
+        saveState(false);
+        render();
+      } else {
+        state.leadAuthError = true;
+        render();
+      }
+    }
+
+    function lockLeadMode() {
+      state.leadUnlocked = false;
+      state.mode = "member";
+      state.showLeadAuthPrompt = false;
+      state.leadAuthError = false;
+      saveState(false);
+      render();
+    }
+
+    function getRole(roleId) {
+      return ROLES.find((r) => r.id === roleId) || ROLES[0];
+    }
+
+    function isProjectActive(project) {
+      return (project.status || "active") === "active";
+    }
+
+    function getMissingDeps(chapter, roleId) {
+      const role = getRole(roleId);
+      return role.deps.filter((depId) => !chapter.done[depId]);
+    }
+
+    function isUnlockedForRole(chapter, roleId) {
+      return getMissingDeps(chapter, roleId).length === 0;
+    }
+
+    function toggleRoleBinding(projectId, roleId) {
+      const project = state.projects[projectId];
+      if (!project || !isProjectActive(project)) return;
+      const list = state.boundRolesByProject[projectId] || [];
+      if (list.includes(roleId)) {
+        state.boundRolesByProject[projectId] = list.filter((id) => id !== roleId);
+      } else {
+        state.boundRolesByProject[projectId] = [...list, roleId];
+      }
+      saveState(true);
+      render();
+    }
+
+    function setChapterDone(projectId, chapterId, roleId, value) {
+      const project = state.projects[projectId];
+      if (!project || !isProjectActive(project)) return;
+      const ch = project.chapters.find((c) => c.id === chapterId);
+      if (!ch) return;
+      if (value && !isUnlockedForRole(ch, roleId)) return;
+      ch.done[roleId] = Boolean(value);
+      saveState(true);
+      render();
+    }
+
+    function setProjectStatus(projectId, nextStatus) {
+      if (!state.leadUnlocked) return;
+      const project = state.projects[projectId];
+      if (!project) return;
+      project.status = nextStatus;
+      if (nextStatus !== "active") {
+        project.chapters.forEach((c) => { c.isEditing = false; });
+      }
+      saveState(true);
+      render();
+    }
+
+    function createProject(name, note) {
+      if (!state.leadUnlocked) return;
+      const cleanName = (name || "").trim();
+      if (!cleanName) return;
+      const id = `proj-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+      state.projects[id] = {
+        id,
+        name: cleanName,
+        status: "active",
+        note: (note || "").trim() || "Новый проект · Статус: В работе",
+        chapters: []
+      };
+      state.boundRolesByProject[id] = [];
+      state.selectedProjectId = id;
+      saveState(true);
+      render();
+    }
+
+    function toggleEditChapter(projectId, chapterId) {
+      if (!state.leadUnlocked) return;
+      const project = state.projects[projectId];
+      if (!project || !isProjectActive(project)) return;
+      const ch = project.chapters.find((c) => c.id === chapterId);
+      if (!ch) return;
+      ch.isEditing = !ch.isEditing;
+      render();
+    }
+
+    function updateChapterField(projectId, chapterId, field, value) {
+      if (!state.leadUnlocked) return;
+      const project = state.projects[projectId];
+      if (!project || !isProjectActive(project)) return;
+      const ch = project.chapters.find((c) => c.id === chapterId);
+      if (!ch) return;
+      ch[field] = value;
+      saveState(true);
+    }
+
+    function updateRoleDeadline(projectId, chapterId, roleId, value) {
+      if (!state.leadUnlocked) return;
+      const project = state.projects[projectId];
+      if (!project || !isProjectActive(project)) return;
+      const ch = project.chapters.find((c) => c.id === chapterId);
+      if (!ch) return;
+      ch.roleDeadlines[roleId] = value;
+      saveState(true);
+      render();
+    }
+
+    function clearRoleDeadline(projectId, chapterId, roleId) {
+      updateRoleDeadline(projectId, chapterId, roleId, "");
+    }
+
+    function deleteChapter(projectId, chapterId) {
+      if (!state.leadUnlocked) return;
+      const project = state.projects[projectId];
+      if (!project || !isProjectActive(project)) return;
+      project.chapters = project.chapters.filter((c) => c.id !== chapterId);
+      saveState(true);
+      render();
+    }
+
+    function addChapter(projectId, label, defaultDeadline) {
+      if (!state.leadUnlocked) return;
+      const project = state.projects[projectId];
+      if (!project || !isProjectActive(project)) return;
+      const cleanLabel = (label || "").trim();
+      if (!cleanLabel) return;
+      const dl = (defaultDeadline || "").trim();
+      const dlMap = makeDeadlinesMap({});
+      if (dl) {
+        ROLES.forEach((r) => {
+          dlMap[r.id] = dl;
+        });
+      }
+      project.chapters.push({
+        id: `${projectId}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        label: cleanLabel,
+        done: makeDoneMap({}),
+        roleDeadlines: dlMap,
+        isEditing: false
+      });
+      saveState(true);
+      render();
+    }
+
+    function resetDemoData() {
+      if (!state.leadUnlocked) return;
+      const keepUnlocked = state.leadUnlocked;
+      state = structuredClone(DEFAULT_STATE);
+      state.leadUnlocked = keepUnlocked;
+      state.mode = keepUnlocked ? "lead" : "member";
+      saveState(true);
+      render();
+    }
+
+    function render() {
+      const project = state.projects[state.selectedProjectId] || Object.values(state.projects)[0];
+      const currentRole = getRole(state.selectedRoleId);
+      const boundRoles = state.boundRolesByProject[project.id] || [];
+      const activeProject = isProjectActive(project);
+      const statusLabel = PROJECT_STATUSES[project.status || "active"] || "В работе";
+
+      const tgUser = window.Telegram?.WebApp?.initDataUnsafe?.user;
+      const userLabel = tgUser
+        ? `${tgUser.first_name || ""} (@${tgUser.username || tgUser.id})`
+        : "Локальный профиль";
+
+      let html = `
+        <div class="topbar">
+          <div>
+            <h1>Трекер глав команды</h1>
+            <div class="sub">${userLabel} · ${syncStatus}</div>
+          </div>
+          <div class="mode-switch">
+            <button class="btn-small" onclick="pullSharedState()" title="Обновить данные из Google Таблицы">↻ Обновить</button>
+            <button class="${state.mode === "member" ? "active" : ""}" onclick="state.mode='member'; state.showLeadAuthPrompt=false; saveState(false); render();">Участник</button>
+            <button class="${state.mode === "lead" ? "active" : ""}" onclick="openLeadTab()">${state.leadUnlocked ? "Руководство" : "🔒 Руководство"}</button>
+            ${state.leadUnlocked ? `<button class="btn-small" onclick="lockLeadMode()">Заблокировать</button>` : ""}
+          </div>
+        </div>
+      `;
+
+      if (state.showLeadAuthPrompt && !state.leadUnlocked) {
+        html += `
+          <div class="panel">
+            <div class="chapter-title" style="margin-bottom: 6px;">Вход в режим руководства</div>
+            <div class="sub" style="margin-bottom: 10px;">
+              Редактировать проекты, главы и дедлайны могут только люди с паролем руководства.
+            </div>
+            <div class="add-form">
+              <input type="password" class="compact" id="lead-pass-input" placeholder="Введите пароль" onkeydown="if(event.key==='Enter') submitLeadPasscode(this.value)" />
+              <button onclick="submitLeadPasscode(document.getElementById('lead-pass-input').value)">Войти</button>
+              <button class="btn-small" onclick="state.showLeadAuthPrompt=false; state.leadAuthError=false; render();">Отмена</button>
+              ${state.leadAuthError ? `<span class="badge err">Неверный пароль</span>` : ""}
+            </div>
+          </div>
+        `;
+      }
+
+      html += `
+        <div class="panel ${!activeProject ? "archived" : ""}">
+          <div class="row" style="margin-bottom: 10px;">
+            <span class="label-inline">Проект:</span>
+            ${Object.values(state.projects).map((p) => {
+              const pClosed = (p.status || "active") !== "active";
+              return `
+                <button class="${p.id === project.id ? "active" : ""}" onclick="state.selectedProjectId='${p.id}'; saveState(true); render();">
+                  ${p.name}${pClosed ? ` (${PROJECT_STATUSES[p.status]})` : ""}
+                </button>
+              `;
+            }).join("")}
+          </div>
+          <div class="row">
+            <span class="badge ${activeProject ? "ok" : "closed"}">Статус: ${statusLabel}</span>
+            <span class="sub">${project.note}</span>
+          </div>
+        </div>
+      `;
+
+      if (state.mode === "member" || !state.leadUnlocked) {
+        html += `
+          <div class="panel ${!activeProject ? "archived" : ""}">
+            <div class="row" style="margin-bottom: 8px;">
+              <span class="label-inline">Ваша роль:</span>
+              ${ROLES.map((r) => {
+                const isBound = boundRoles.includes(r.id);
+                return `
+                  <button class="role-chip ${r.id === currentRole.id ? "active" : ""} ${isBound ? "bound" : ""}" onclick="state.selectedRoleId='${r.id}'; saveState(false); render();">
+                    ${r.name}
+                  </button>
+                `;
+              }).join("")}
+            </div>
+            <div class="row">
+              <button class="btn-small" ${!activeProject ? "disabled" : ""} onclick="toggleRoleBinding('${project.id}', '${currentRole.id}')">
+                ${boundRoles.includes(currentRole.id) ? "★ Роль закреплена за профилем (убрать)" : "☆ Закрепить роль за профилем"}
+              </button>
+              <span class="sub">
+                ${activeProject ? "Закреплённые роли отмечены звёздочкой ★" : `Проект в статусе «${statusLabel}»: закрепление ролей и отметки закрыты`}
+              </span>
+            </div>
+          </div>
+        `;
+
+        if (project.chapters.length === 0) {
+          html += `<div class="panel"><div class="sub">Глав пока нет.</div></div>`;
+        } else {
+          project.chapters.forEach((ch) => {
+            const missing = getMissingDeps(ch, currentRole.id);
+            const unlocked = missing.length === 0;
+            const isDone = Boolean(ch.done[currentRole.id]);
+            const roleDeadline = (ch.roleDeadlines && ch.roleDeadlines[currentRole.id]) || "";
+            const missingNames = missing.map((id) => getRole(id).name).join(" + ");
+
+            html += `
+              <div class="chapter-card ${!activeProject ? "archived" : !unlocked ? "locked" : ""}">
+                <div class="chapter-head">
+                  <div class="row">
+                    <span class="chapter-title">Глава ${ch.label}</span>
+                    ${
+                      !activeProject
+                        ? `<span class="badge closed">${statusLabel}</span>`
+                        : !unlocked
+                          ? `<span class="badge">Ожидает: ${missingNames}</span>`
+                          : isDone
+                            ? `<span class="badge ok">Готово</span>`
+                            : `<span class="badge work">В работе</span>`
+                    }
+                    <span class="badge">${roleDeadline ? `Дедлайн: ${roleDeadline}` : "Без дедлайна"}</span>
+                  </div>
+                  <div class="row">
+                    ${
+                      !activeProject
+                        ? `<button class="btn-small" disabled>Закрыто</button>`
+                        : !unlocked
+                          ? `<button class="btn-small" disabled>Недоступно</button>`
+                          : isDone
+                            ? `<button class="btn-small btn-reopen" onclick="setChapterDone('${project.id}', '${ch.id}', '${currentRole.id}', false)">Вернуть в работу</button>`
+                            : `<button class="btn-small btn-done" onclick="setChapterDone('${project.id}', '${ch.id}', '${currentRole.id}', true)">Готово</button>`
+                    }
+                  </div>
+                </div>
+                <div class="meta-line">
+                  ${
+                    currentRole.deps.length
+                      ? `Зависимости роли «${currentRole.name}»: ${currentRole.deps.map((d) => getRole(d).name).join(" + ")}`
+                      : `Роль «${currentRole.name}» не ждёт предыдущих этапов`
+                  }
+                </div>
+              </div>
+            `;
+          });
+        }
+      } else {
+        html += `
+          <div class="panel">
+            <div class="chapter-title" style="margin-bottom: 8px;">Создать новый проект</div>
+            <div class="add-form">
+              <input type="text" class="compact" id="new-proj-name" placeholder="Название манги / проекта" />
+              <input type="text" class="compact" style="min-width: 220px;" id="new-proj-note" placeholder="Заметка о сроках / режиме (опц.)" />
+              <button onclick="createProject(document.getElementById('new-proj-name').value, document.getElementById('new-proj-note').value)">+ Создать проект</button>
+              <button class="btn-small" style="margin-left:auto;" onclick="resetDemoData()">Сбросить к стартовым данным</button>
+            </div>
+          </div>
+
+          <div class="panel ${!activeProject ? "archived" : ""}">
+            <div class="row" style="justify-content: space-between; margin-bottom: 10px;">
+              <div class="row">
+                <span class="chapter-title">Проект «${project.name}»</span>
+                <span class="badge ${activeProject ? "ok" : "closed"}">${statusLabel}</span>
+              </div>
+              <div class="row">
+                <span class="label-inline">Статус проекта:</span>
+                <select onchange="setProjectStatus('${project.id}', this.value)">
+                  <option value="active" ${(project.status || "active") === "active" ? "selected" : ""}>В работе</option>
+                  <option value="completed" ${project.status === "completed" ? "selected" : ""}>Завершено</option>
+                  <option value="dropped" ${project.status === "dropped" ? "selected" : ""}>Брошено</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="add-form">
+              <input type="text" class="compact" id="new-chap-label" placeholder="Номер главы (напр. 121)" ${!activeProject ? "disabled" : ""} />
+              <input type="text" class="compact" id="new-chap-dl" placeholder="Дедлайн (опц., напр. 30.11)" ${!activeProject ? "disabled" : ""} />
+              <button ${!activeProject ? "disabled" : ""} onclick="addChapter('${project.id}', document.getElementById('new-chap-label').value, document.getElementById('new-chap-dl').value)">+ Добавить главу</button>
+            </div>
+            <div class="hint">
+              ${
+                activeProject
+                  ? "По умолчанию показана сводка. Нажмите «Редактировать» на нужной главе, чтобы задать или очистить дедлайны по каждой роли."
+                  : `Проект имеет статус «${statusLabel}»: главы, дедлайны и закрепление ролей заблокированы до возврата статуса «В работе».`
+              }
+            </div>
+          </div>
+        `;
+
+        project.chapters.forEach((ch) => {
+          const deadlinesList = ROLES
+            .filter((r) => ch.roleDeadlines && ch.roleDeadlines[r.id])
+            .map((r) => `${r.name}: ${ch.roleDeadlines[r.id]}`);
+
+          html += `
+            <div class="chapter-card ${!activeProject ? "archived" : ""}">
+              <div class="chapter-head">
+                <div class="row">
+                  <span class="chapter-title">Глава ${ch.label}</span>
+                  <span class="badge">${deadlinesList.length ? deadlinesList.join(" · ") : "Без дедлайнов"}</span>
+                </div>
+                <button class="btn-small ${ch.isEditing ? "active" : ""}" ${!activeProject ? "disabled" : ""} onclick="toggleEditChapter('${project.id}', '${ch.id}')">
+                  ${ch.isEditing ? "Свернуть" : "Редактировать"}
+                </button>
+              </div>
+
+              <div class="roles-summary">
+                ${ROLES.map((r) => {
+                  const done = Boolean(ch.done[r.id]);
+                  const dl = ch.roleDeadlines && ch.roleDeadlines[r.id];
+                  return `
+                    <span class="role-mini ${done ? "done" : ""}">
+                      ${done ? "✓" : "○"} ${r.name}${dl ? ` (${dl})` : ""}
+                    </span>
+                  `;
+                }).join("")}
+              </div>
+
+              ${
+                activeProject && ch.isEditing
+                  ? `
+                    <div class="editor-box">
+                      <div class="row" style="margin-bottom: 10px;">
+                        <span class="label-inline">Название / номер главы:</span>
+                        <input type="text" class="compact" value="${ch.label.replace(/"/g, "&quot;")}" onchange="updateChapterField('${project.id}', '${ch.id}', 'label', this.value); render();" />
+                        <button class="btn-small btn-danger" style="margin-left:auto;" onclick="deleteChapter('${project.id}', '${ch.id}')">Удалить главу</button>
+                      </div>
+
+                      <div class="label-inline">Дедлайны по каждой роли:</div>
+                      <div class="grid-roles">
+                        ${ROLES.map((r) => {
+                          const val = (ch.roleDeadlines && ch.roleDeadlines[r.id]) || "";
+                          return `
+                            <div class="role-dl-item">
+                              <div class="role-dl-top">
+                                <span>${r.name}</span>
+                                ${val ? `<button class="btn-small" onclick="clearRoleDeadline('${project.id}', '${ch.id}', '${r.id}')">Очистить</button>` : `<span class="sub">нет</span>`}
+                              </div>
+                              <input type="text" placeholder="Напр. 23.11 или пт" value="${val.replace(/"/g, "&quot;")}" onchange="updateRoleDeadline('${project.id}', '${ch.id}', '${r.id}', this.value)" />
+                            </div>
+                          `;
+                        }).join("")}
+                      </div>
+
+                      <div class="row" style="margin-top: 8px;">
+                        <button class="btn-small" onclick="toggleEditChapter('${project.id}', '${ch.id}')">Готово / Свернуть</button>
+                      </div>
+                    </div>
+                  `
+                  : ""
+              }
+            </div>
+          `;
+        });
+      }
+
+      document.getElementById("app").innerHTML = html;
+      if (window.Telegram?.WebApp) {
+        window.Telegram.WebApp.ready();
+      }
+    }
+
+    render();
+    pullSharedState();
+  </script>
+</body>
+</html>
