@@ -131,6 +131,13 @@
       color: var(--danger);
     }
 
+    button.btn-danger-solid {
+      background: var(--danger);
+      border-color: var(--danger);
+      color: #fff;
+      font-weight: 600;
+    }
+
     button.btn-small {
       padding: 4px 9px;
       font-size: 12px;
@@ -289,6 +296,19 @@
       border-radius: 10px;
     }
 
+    .confirm-box {
+      margin-top: 10px;
+      padding: 10px 12px;
+      border-radius: 9px;
+      border: 1px solid rgba(231, 76, 60, 0.45);
+      background: rgba(231, 76, 60, 0.1);
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
     .grid-roles {
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
@@ -403,6 +423,7 @@
       leadUnlocked: false,
       showLeadAuthPrompt: false,
       leadAuthError: false,
+      confirmDeleteProjectId: null,
       selectedProjectId: "lotus",
       selectedRoleId: "edit",
       boundRolesByProject: {
@@ -498,6 +519,7 @@
       const merged = {
         ...structuredClone(DEFAULT_STATE),
         ...(parsed || {}),
+        confirmDeleteProjectId: null,
         boundRolesByProject: {
           ...structuredClone(DEFAULT_STATE.boundRolesByProject),
           ...((parsed && parsed.boundRolesByProject) || {})
@@ -524,7 +546,8 @@
 
     function saveLocalState() {
       try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+        const toSave = { ...state, confirmDeleteProjectId: null };
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
       } catch (e) {}
     }
 
@@ -634,6 +657,7 @@
       state.mode = "member";
       state.showLeadAuthPrompt = false;
       state.leadAuthError = false;
+      state.confirmDeleteProjectId = null;
       saveState(false);
       render();
     }
@@ -705,6 +729,38 @@
       };
       state.boundRolesByProject[id] = [];
       state.selectedProjectId = id;
+      state.confirmDeleteProjectId = null;
+      saveState(true);
+      render();
+    }
+
+    function askDeleteProject(projectId) {
+      if (!state.leadUnlocked) return;
+      const ids = Object.keys(state.projects);
+      if (ids.length <= 1 || !state.projects[projectId]) return;
+      state.confirmDeleteProjectId = projectId;
+      render();
+    }
+
+    function cancelDeleteProject() {
+      state.confirmDeleteProjectId = null;
+      render();
+    }
+
+    function confirmDeleteProject(projectId) {
+      if (!state.leadUnlocked) return;
+      const ids = Object.keys(state.projects);
+      if (ids.length <= 1 || !state.projects[projectId]) return;
+
+      delete state.projects[projectId];
+      delete state.boundRolesByProject[projectId];
+      state.confirmDeleteProjectId = null;
+
+      if (state.selectedProjectId === projectId) {
+        const remainingIds = Object.keys(state.projects);
+        state.selectedProjectId = remainingIds[0] || "";
+      }
+
       saveState(true);
       render();
     }
@@ -777,22 +833,18 @@
       render();
     }
 
-    function resetDemoData() {
-      if (!state.leadUnlocked) return;
-      const keepUnlocked = state.leadUnlocked;
-      state = structuredClone(DEFAULT_STATE);
-      state.leadUnlocked = keepUnlocked;
-      state.mode = keepUnlocked ? "lead" : "member";
-      saveState(true);
-      render();
-    }
-
     function render() {
-      const project = state.projects[state.selectedProjectId] || Object.values(state.projects)[0];
+      const projectList = Object.values(state.projects);
+      const project = state.projects[state.selectedProjectId] || projectList[0];
+      if (project && state.selectedProjectId !== project.id) {
+        state.selectedProjectId = project.id;
+      }
+
       const currentRole = getRole(state.selectedRoleId);
-      const boundRoles = state.boundRolesByProject[project.id] || [];
-      const activeProject = isProjectActive(project);
-      const statusLabel = PROJECT_STATUSES[project.status || "active"] || "В работе";
+      const boundRoles = project ? (state.boundRolesByProject[project.id] || []) : [];
+      const activeProject = project ? isProjectActive(project) : false;
+      const statusLabel = project ? (PROJECT_STATUSES[project.status || "active"] || "В работе") : "";
+      const canDeleteProject = projectList.length > 1 && Boolean(project);
 
       const tgUser = window.Telegram?.WebApp?.initDataUnsafe?.user;
       const userLabel = tgUser
@@ -807,7 +859,7 @@
           </div>
           <div class="mode-switch">
             <button class="btn-small" onclick="pullSharedState()" title="Обновить данные из Google Таблицы">↻ Обновить</button>
-            <button class="${state.mode === "member" ? "active" : ""}" onclick="state.mode='member'; state.showLeadAuthPrompt=false; saveState(false); render();">Участник</button>
+            <button class="${state.mode === "member" ? "active" : ""}" onclick="state.mode='member'; state.showLeadAuthPrompt=false; state.confirmDeleteProjectId=null; saveState(false); render();">Участник</button>
             <button class="${state.mode === "lead" ? "active" : ""}" onclick="openLeadTab()">${state.leadUnlocked ? "Руководство" : "🔒 Руководство"}</button>
             ${state.leadUnlocked ? `<button class="btn-small" onclick="lockLeadMode()">Заблокировать</button>` : ""}
           </div>
@@ -831,99 +883,103 @@
         `;
       }
 
-      html += `
-        <div class="panel ${!activeProject ? "archived" : ""}">
-          <div class="row" style="margin-bottom: 10px;">
-            <span class="label-inline">Проект:</span>
-            ${Object.values(state.projects).map((p) => {
-              const pClosed = (p.status || "active") !== "active";
-              return `
-                <button class="${p.id === project.id ? "active" : ""}" onclick="state.selectedProjectId='${p.id}'; saveState(true); render();">
-                  ${p.name}${pClosed ? ` (${PROJECT_STATUSES[p.status]})` : ""}
-                </button>
-              `;
-            }).join("")}
-          </div>
-          <div class="row">
-            <span class="badge ${activeProject ? "ok" : "closed"}">Статус: ${statusLabel}</span>
-            <span class="sub">${project.note}</span>
-          </div>
-        </div>
-      `;
-
-      if (state.mode === "member" || !state.leadUnlocked) {
+      if (project) {
         html += `
           <div class="panel ${!activeProject ? "archived" : ""}">
-            <div class="row" style="margin-bottom: 8px;">
-              <span class="label-inline">Ваша роль:</span>
-              ${ROLES.map((r) => {
-                const isBound = boundRoles.includes(r.id);
+            <div class="row" style="margin-bottom: 10px;">
+              <span class="label-inline">Проект:</span>
+              ${projectList.map((p) => {
+                const pClosed = (p.status || "active") !== "active";
                 return `
-                  <button class="role-chip ${r.id === currentRole.id ? "active" : ""} ${isBound ? "bound" : ""}" onclick="state.selectedRoleId='${r.id}'; saveState(false); render();">
-                    ${r.name}
+                  <button class="${p.id === project.id ? "active" : ""}" onclick="state.selectedProjectId='${p.id}'; state.confirmDeleteProjectId=null; saveState(true); render();">
+                    ${p.name}${pClosed ? ` (${PROJECT_STATUSES[p.status]})` : ""}
                   </button>
                 `;
               }).join("")}
             </div>
             <div class="row">
-              <button class="btn-small" ${!activeProject ? "disabled" : ""} onclick="toggleRoleBinding('${project.id}', '${currentRole.id}')">
-                ${boundRoles.includes(currentRole.id) ? "★ Роль закреплена за профилем (убрать)" : "☆ Закрепить роль за профилем"}
-              </button>
-              <span class="sub">
-                ${activeProject ? "Закреплённые роли отмечены звёздочкой ★" : `Проект в статусе «${statusLabel}»: закрепление ролей и отметки закрыты`}
-              </span>
+              <span class="badge ${activeProject ? "ok" : "closed"}">Статус: ${statusLabel}</span>
+              <span class="sub">${project.note}</span>
             </div>
           </div>
         `;
+      }
 
-        if (project.chapters.length === 0) {
-          html += `<div class="panel"><div class="sub">Глав пока нет.</div></div>`;
-        } else {
-          project.chapters.forEach((ch) => {
-            const missing = getMissingDeps(ch, currentRole.id);
-            const unlocked = missing.length === 0;
-            const isDone = Boolean(ch.done[currentRole.id]);
-            const roleDeadline = (ch.roleDeadlines && ch.roleDeadlines[currentRole.id]) || "";
-            const missingNames = missing.map((id) => getRole(id).name).join(" + ");
-
-            html += `
-              <div class="chapter-card ${!activeProject ? "archived" : !unlocked ? "locked" : ""}">
-                <div class="chapter-head">
-                  <div class="row">
-                    <span class="chapter-title">Глава ${ch.label}</span>
-                    ${
-                      !activeProject
-                        ? `<span class="badge closed">${statusLabel}</span>`
-                        : !unlocked
-                          ? `<span class="badge">Ожидает: ${missingNames}</span>`
-                          : isDone
-                            ? `<span class="badge ok">Готово</span>`
-                            : `<span class="badge work">В работе</span>`
-                    }
-                    <span class="badge">${roleDeadline ? `Дедлайн: ${roleDeadline}` : "Без дедлайна"}</span>
-                  </div>
-                  <div class="row">
-                    ${
-                      !activeProject
-                        ? `<button class="btn-small" disabled>Закрыто</button>`
-                        : !unlocked
-                          ? `<button class="btn-small" disabled>Недоступно</button>`
-                          : isDone
-                            ? `<button class="btn-small btn-reopen" onclick="setChapterDone('${project.id}', '${ch.id}', '${currentRole.id}', false)">Вернуть в работу</button>`
-                            : `<button class="btn-small btn-done" onclick="setChapterDone('${project.id}', '${ch.id}', '${currentRole.id}', true)">Готово</button>`
-                    }
-                  </div>
-                </div>
-                <div class="meta-line">
-                  ${
-                    currentRole.deps.length
-                      ? `Зависимости роли «${currentRole.name}»: ${currentRole.deps.map((d) => getRole(d).name).join(" + ")}`
-                      : `Роль «${currentRole.name}» не ждёт предыдущих этапов`
-                  }
-                </div>
+      if (state.mode === "member" || !state.leadUnlocked) {
+        if (project) {
+          html += `
+            <div class="panel ${!activeProject ? "archived" : ""}">
+              <div class="row" style="margin-bottom: 8px;">
+                <span class="label-inline">Ваша роль:</span>
+                ${ROLES.map((r) => {
+                  const isBound = boundRoles.includes(r.id);
+                  return `
+                    <button class="role-chip ${r.id === currentRole.id ? "active" : ""} ${isBound ? "bound" : ""}" onclick="state.selectedRoleId='${r.id}'; saveState(false); render();">
+                      ${r.name}
+                    </button>
+                  `;
+                }).join("")}
               </div>
-            `;
-          });
+              <div class="row">
+                <button class="btn-small" ${!activeProject ? "disabled" : ""} onclick="toggleRoleBinding('${project.id}', '${currentRole.id}')">
+                  ${boundRoles.includes(currentRole.id) ? "★ Роль закреплена за профилем (убрать)" : "☆ Закрепить роль за профилем"}
+                </button>
+                <span class="sub">
+                  ${activeProject ? "Закреплённые роли отмечены звёздочкой ★" : `Проект в статусе «${statusLabel}»: закрепление ролей и отметки закрыты`}
+                </span>
+              </div>
+            </div>
+          `;
+
+          if (project.chapters.length === 0) {
+            html += `<div class="panel"><div class="sub">Глав пока нет.</div></div>`;
+          } else {
+            project.chapters.forEach((ch) => {
+              const missing = getMissingDeps(ch, currentRole.id);
+              const unlocked = missing.length === 0;
+              const isDone = Boolean(ch.done[currentRole.id]);
+              const roleDeadline = (ch.roleDeadlines && ch.roleDeadlines[currentRole.id]) || "";
+              const missingNames = missing.map((id) => getRole(id).name).join(" + ");
+
+              html += `
+                <div class="chapter-card ${!activeProject ? "archived" : !unlocked ? "locked" : ""}">
+                  <div class="chapter-head">
+                    <div class="row">
+                      <span class="chapter-title">Глава ${ch.label}</span>
+                      ${
+                        !activeProject
+                          ? `<span class="badge closed">${statusLabel}</span>`
+                          : !unlocked
+                            ? `<span class="badge">Ожидает: ${missingNames}</span>`
+                            : isDone
+                              ? `<span class="badge ok">Готово</span>`
+                              : `<span class="badge work">В работе</span>`
+                      }
+                      <span class="badge">${roleDeadline ? `Дедлайн: ${roleDeadline}` : "Без дедлайна"}</span>
+                    </div>
+                    <div class="row">
+                      ${
+                        !activeProject
+                          ? `<button class="btn-small" disabled>Закрыто</button>`
+                          : !unlocked
+                            ? `<button class="btn-small" disabled>Недоступно</button>`
+                            : isDone
+                              ? `<button class="btn-small btn-reopen" onclick="setChapterDone('${project.id}', '${ch.id}', '${currentRole.id}', false)">Вернуть в работу</button>`
+                              : `<button class="btn-small btn-done" onclick="setChapterDone('${project.id}', '${ch.id}', '${currentRole.id}', true)">Готово</button>`
+                      }
+                    </div>
+                  </div>
+                  <div class="meta-line">
+                    ${
+                      currentRole.deps.length
+                        ? `Зависимости роли «${currentRole.name}»: ${currentRole.deps.map((d) => getRole(d).name).join(" + ")}`
+                        : `Роль «${currentRole.name}» не ждёт предыдущих этапов`
+                    }
+                  </div>
+                </div>
+              `;
+            });
+          }
         }
       } else {
         html += `
@@ -933,106 +989,134 @@
               <input type="text" class="compact" id="new-proj-name" placeholder="Название манги / проекта" />
               <input type="text" class="compact" style="min-width: 220px;" id="new-proj-note" placeholder="Заметка о сроках / режиме (опц.)" />
               <button onclick="createProject(document.getElementById('new-proj-name').value, document.getElementById('new-proj-note').value)">+ Создать проект</button>
-              <button class="btn-small" style="margin-left:auto;" onclick="resetDemoData()">Сбросить к стартовым данным</button>
-            </div>
-          </div>
-
-          <div class="panel ${!activeProject ? "archived" : ""}">
-            <div class="row" style="justify-content: space-between; margin-bottom: 10px;">
-              <div class="row">
-                <span class="chapter-title">Проект «${project.name}»</span>
-                <span class="badge ${activeProject ? "ok" : "closed"}">${statusLabel}</span>
-              </div>
-              <div class="row">
-                <span class="label-inline">Статус проекта:</span>
-                <select onchange="setProjectStatus('${project.id}', this.value)">
-                  <option value="active" ${(project.status || "active") === "active" ? "selected" : ""}>В работе</option>
-                  <option value="completed" ${project.status === "completed" ? "selected" : ""}>Завершено</option>
-                  <option value="dropped" ${project.status === "dropped" ? "selected" : ""}>Брошено</option>
-                </select>
-              </div>
-            </div>
-
-            <div class="add-form">
-              <input type="text" class="compact" id="new-chap-label" placeholder="Номер главы (напр. 121)" ${!activeProject ? "disabled" : ""} />
-              <input type="text" class="compact" id="new-chap-dl" placeholder="Дедлайн (опц., напр. 30.11)" ${!activeProject ? "disabled" : ""} />
-              <button ${!activeProject ? "disabled" : ""} onclick="addChapter('${project.id}', document.getElementById('new-chap-label').value, document.getElementById('new-chap-dl').value)">+ Добавить главу</button>
-            </div>
-            <div class="hint">
-              ${
-                activeProject
-                  ? "По умолчанию показана сводка. Нажмите «Редактировать» на нужной главе, чтобы задать или очистить дедлайны по каждой роли."
-                  : `Проект имеет статус «${statusLabel}»: главы, дедлайны и закрепление ролей заблокированы до возврата статуса «В работе».`
-              }
             </div>
           </div>
         `;
 
-        project.chapters.forEach((ch) => {
-          const deadlinesList = ROLES
-            .filter((r) => ch.roleDeadlines && ch.roleDeadlines[r.id])
-            .map((r) => `${r.name}: ${ch.roleDeadlines[r.id]}`);
+        if (project) {
+          const isAskingDelete = state.confirmDeleteProjectId === project.id;
 
           html += `
-            <div class="chapter-card ${!activeProject ? "archived" : ""}">
-              <div class="chapter-head">
+            <div class="panel ${!activeProject ? "archived" : ""}">
+              <div class="row" style="justify-content: space-between; margin-bottom: 10px;">
                 <div class="row">
-                  <span class="chapter-title">Глава ${ch.label}</span>
-                  <span class="badge">${deadlinesList.length ? deadlinesList.join(" · ") : "Без дедлайнов"}</span>
+                  <span class="chapter-title">Проект «${project.name}»</span>
+                  <span class="badge ${activeProject ? "ok" : "closed"}">${statusLabel}</span>
                 </div>
-                <button class="btn-small ${ch.isEditing ? "active" : ""}" ${!activeProject ? "disabled" : ""} onclick="toggleEditChapter('${project.id}', '${ch.id}')">
-                  ${ch.isEditing ? "Свернуть" : "Редактировать"}
-                </button>
-              </div>
-
-              <div class="roles-summary">
-                ${ROLES.map((r) => {
-                  const done = Boolean(ch.done[r.id]);
-                  const dl = ch.roleDeadlines && ch.roleDeadlines[r.id];
-                  return `
-                    <span class="role-mini ${done ? "done" : ""}">
-                      ${done ? "✓" : "○"} ${r.name}${dl ? ` (${dl})` : ""}
-                    </span>
-                  `;
-                }).join("")}
+                <div class="row">
+                  <span class="label-inline">Статус проекта:</span>
+                  <select onchange="setProjectStatus('${project.id}', this.value)">
+                    <option value="active" ${(project.status || "active") === "active" ? "selected" : ""}>В работе</option>
+                    <option value="completed" ${project.status === "completed" ? "selected" : ""}>Завершено</option>
+                    <option value="dropped" ${project.status === "dropped" ? "selected" : ""}>Брошено</option>
+                  </select>
+                  <button
+                    class="btn-small btn-danger"
+                    ${!canDeleteProject ? "disabled title='Нельзя удалить последний оставшийся проект'" : ""}
+                    onclick="askDeleteProject('${project.id}')"
+                  >
+                    Удалить проект
+                  </button>
+                </div>
               </div>
 
               ${
-                activeProject && ch.isEditing
+                isAskingDelete
                   ? `
-                    <div class="editor-box">
-                      <div class="row" style="margin-bottom: 10px;">
-                        <span class="label-inline">Название / номер главы:</span>
-                        <input type="text" class="compact" value="${ch.label.replace(/"/g, "&quot;")}" onchange="updateChapterField('${project.id}', '${ch.id}', 'label', this.value); render();" />
-                        <button class="btn-small btn-danger" style="margin-left:auto;" onclick="deleteChapter('${project.id}', '${ch.id}')">Удалить главу</button>
-                      </div>
-
-                      <div class="label-inline">Дедлайны по каждой роли:</div>
-                      <div class="grid-roles">
-                        ${ROLES.map((r) => {
-                          const val = (ch.roleDeadlines && ch.roleDeadlines[r.id]) || "";
-                          return `
-                            <div class="role-dl-item">
-                              <div class="role-dl-top">
-                                <span>${r.name}</span>
-                                ${val ? `<button class="btn-small" onclick="clearRoleDeadline('${project.id}', '${ch.id}', '${r.id}')">Очистить</button>` : `<span class="sub">нет</span>`}
-                              </div>
-                              <input type="text" placeholder="Напр. 23.11 или пт" value="${val.replace(/"/g, "&quot;")}" onchange="updateRoleDeadline('${project.id}', '${ch.id}', '${r.id}', this.value)" />
-                            </div>
-                          `;
-                        }).join("")}
-                      </div>
-
-                      <div class="row" style="margin-top: 8px;">
-                        <button class="btn-small" onclick="toggleEditChapter('${project.id}', '${ch.id}')">Готово / Свернуть</button>
+                    <div class="confirm-box">
+                      <span style="font-size: 13px;">
+                        Уверены, что хотите удалить проект <strong>«${project.name}»</strong> со всеми его главами?
+                      </span>
+                      <div class="row">
+                        <button class="btn-small btn-danger-solid" onclick="confirmDeleteProject('${project.id}')">Да</button>
+                        <button class="btn-small" onclick="cancelDeleteProject()">Нет</button>
                       </div>
                     </div>
                   `
                   : ""
               }
+
+              <div class="add-form" style="margin-top: 10px;">
+                <input type="text" class="compact" id="new-chap-label" placeholder="Номер главы (напр. 121)" ${!activeProject ? "disabled" : ""} />
+                <input type="text" class="compact" id="new-chap-dl" placeholder="Дедлайн (опц., напр. 30.11)" ${!activeProject ? "disabled" : ""} />
+                <button ${!activeProject ? "disabled" : ""} onclick="addChapter('${project.id}', document.getElementById('new-chap-label').value, document.getElementById('new-chap-dl').value)">+ Добавить главу</button>
+              </div>
+              <div class="hint">
+                ${
+                  activeProject
+                    ? "По умолчанию показана сводка. Нажмите «Редактировать» на нужной главе, чтобы задать или очистить дедлайны по каждой роли."
+                    : `Проект имеет статус «${statusLabel}»: главы, дедлайны и закрепление ролей заблокированы до возврата статуса «В работе».`
+                }
+              </div>
             </div>
           `;
-        });
+
+          project.chapters.forEach((ch) => {
+            const deadlinesList = ROLES
+              .filter((r) => ch.roleDeadlines && ch.roleDeadlines[r.id])
+              .map((r) => `${r.name}: ${ch.roleDeadlines[r.id]}`);
+
+            html += `
+              <div class="chapter-card ${!activeProject ? "archived" : ""}">
+                <div class="chapter-head">
+                  <div class="row">
+                    <span class="chapter-title">Глава ${ch.label}</span>
+                    <span class="badge">${deadlinesList.length ? deadlinesList.join(" · ") : "Без дедлайнов"}</span>
+                  </div>
+                  <button class="btn-small ${ch.isEditing ? "active" : ""}" ${!activeProject ? "disabled" : ""} onclick="toggleEditChapter('${project.id}', '${ch.id}')">
+                    ${ch.isEditing ? "Свернуть" : "Редактировать"}
+                  </button>
+                </div>
+
+                <div class="roles-summary">
+                  ${ROLES.map((r) => {
+                    const done = Boolean(ch.done[r.id]);
+                    const dl = ch.roleDeadlines && ch.roleDeadlines[r.id];
+                    return `
+                      <span class="role-mini ${done ? "done" : ""}">
+                        ${done ? "✓" : "○"} ${r.name}${dl ? ` (${dl})` : ""}
+                      </span>
+                    `;
+                  }).join("")}
+                </div>
+
+                ${
+                  activeProject && ch.isEditing
+                    ? `
+                      <div class="editor-box">
+                        <div class="row" style="margin-bottom: 10px;">
+                          <span class="label-inline">Название / номер главы:</span>
+                          <input type="text" class="compact" value="${ch.label.replace(/"/g, "&quot;")}" onchange="updateChapterField('${project.id}', '${ch.id}', 'label', this.value); render();" />
+                          <button class="btn-small btn-danger" style="margin-left:auto;" onclick="deleteChapter('${project.id}', '${ch.id}')">Удалить главу</button>
+                        </div>
+
+                        <div class="label-inline">Дедлайны по каждой роли:</div>
+                        <div class="grid-roles">
+                          ${ROLES.map((r) => {
+                            const val = (ch.roleDeadlines && ch.roleDeadlines[r.id]) || "";
+                            return `
+                              <div class="role-dl-item">
+                                <div class="role-dl-top">
+                                  <span>${r.name}</span>
+                                  ${val ? `<button class="btn-small" onclick="clearRoleDeadline('${project.id}', '${ch.id}', '${r.id}')">Очистить</button>` : `<span class="sub">нет</span>`}
+                                </div>
+                                <input type="text" placeholder="Напр. 23.11 или пт" value="${val.replace(/"/g, "&quot;")}" onchange="updateRoleDeadline('${project.id}', '${ch.id}', '${r.id}', this.value)" />
+                              </div>
+                            `;
+                          }).join("")}
+                        </div>
+
+                        <div class="row" style="margin-top: 8px;">
+                          <button class="btn-small" onclick="toggleEditChapter('${project.id}', '${ch.id}')">Готово / Свернуть</button>
+                        </div>
+                      </div>
+                    `
+                    : ""
+                }
+              </div>
+            `;
+          });
+        }
       }
 
       document.getElementById("app").innerHTML = html;
