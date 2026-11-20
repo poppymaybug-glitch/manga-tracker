@@ -112,6 +112,13 @@
       color: #fff;
     }
 
+    button.btn-take {
+      background: rgba(108, 140, 255, 0.16);
+      border-color: var(--accent);
+      color: #c8d6ff;
+      font-weight: 600;
+    }
+
     button.btn-done {
       background: var(--ok);
       border-color: var(--ok);
@@ -273,6 +280,12 @@
       background: var(--warn-bg);
     }
 
+    .badge.avail {
+      color: #b7c8ff;
+      border-color: rgba(108, 140, 255, 0.35);
+      background: rgba(108, 140, 255, 0.12);
+    }
+
     .badge.closed {
       color: #c2c8d4;
       border-color: #424a5c;
@@ -313,10 +326,16 @@
       background: rgba(46, 204, 113, 0.1);
     }
 
-    .role-mini.ready {
-      border-color: rgba(243, 156, 18, 0.4);
+    .role-mini.taken {
+      border-color: rgba(243, 156, 18, 0.45);
       color: #ffd28a;
-      background: rgba(243, 156, 18, 0.09);
+      background: rgba(243, 156, 18, 0.11);
+    }
+
+    .role-mini.ready {
+      border-color: rgba(108, 140, 255, 0.4);
+      color: #c8d6ff;
+      background: rgba(108, 140, 255, 0.1);
     }
 
     .member-row {
@@ -502,6 +521,14 @@
       { id: "beta", name: "Бета" }
     ];
 
+    function escapeHtml(str) {
+      return String(str || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+
     function getCurrentTgUser() {
       const tgUser = window.Telegram?.WebApp?.initDataUnsafe?.user;
       if (tgUser && tgUser.id) {
@@ -525,7 +552,14 @@
         if (namePart && handlePart) return `${namePart} (${handlePart})`;
         return namePart || handlePart;
       }
+      if (fallbackKey === "local_guest") return "Локальный профиль";
       return fallbackKey || "Профиль";
+    }
+
+    function getActorDisplayName() {
+      const tgUser = getCurrentTgUser();
+      const userKey = getCurrentUserKey();
+      return formatTgUserLabel(tgUser, userKey);
     }
 
     function makeDoneMap(partial = {}) {
@@ -539,6 +573,17 @@
       };
     }
 
+    function makeTakenByMap(partial = {}) {
+      return {
+        clean: partial.clean || "",
+        translate: partial.translate || "",
+        edit: partial.edit || "",
+        sound: partial.sound || "",
+        typeset: partial.typeset || "",
+        beta: partial.beta || ""
+      };
+    }
+
     function makeDeadlinesMap(partial = {}) {
       return {
         clean: partial.clean || "",
@@ -547,6 +592,23 @@
         sound: partial.sound || "",
         typeset: partial.typeset || "",
         beta: partial.beta || ""
+      };
+    }
+
+    function normalizeChapter(ch) {
+      const done = makeDoneMap(ch && ch.done);
+      const rawTaken = makeTakenByMap(ch && ch.takenBy);
+      ROLES.forEach((r) => {
+        if (done[r.id]) {
+          rawTaken[r.id] = "";
+        }
+      });
+      return {
+        ...ch,
+        done,
+        takenBy: rawTaken,
+        roleDeadlines: makeDeadlinesMap(ch && ch.roleDeadlines),
+        isEditing: Boolean(ch && ch.isEditing)
       };
     }
 
@@ -576,6 +638,7 @@
               id: "lotus-117",
               label: "117",
               done: makeDoneMap({ clean: true, translate: true }),
+              takenBy: makeTakenByMap({}),
               roleDeadlines: makeDeadlinesMap({ edit: "23.11", sound: "23.11" }),
               isEditing: false
             },
@@ -583,6 +646,7 @@
               id: "lotus-118",
               label: "118",
               done: makeDoneMap({ clean: true, translate: true }),
+              takenBy: makeTakenByMap({}),
               roleDeadlines: makeDeadlinesMap({ edit: "23.11", sound: "23.11" }),
               isEditing: false
             },
@@ -590,6 +654,7 @@
               id: "lotus-119",
               label: "119",
               done: makeDoneMap({ clean: true }),
+              takenBy: makeTakenByMap({}),
               roleDeadlines: makeDeadlinesMap({}),
               isEditing: false
             },
@@ -597,6 +662,7 @@
               id: "lotus-120",
               label: "120",
               done: makeDoneMap({ clean: true }),
+              takenBy: makeTakenByMap({}),
               roleDeadlines: makeDeadlinesMap({}),
               isEditing: false
             }
@@ -613,6 +679,7 @@
               id: "snow-4",
               label: "4 (отстаёт)",
               done: makeDoneMap({}),
+              takenBy: makeTakenByMap({}),
               roleDeadlines: makeDeadlinesMap({}),
               isEditing: false
             },
@@ -620,6 +687,7 @@
               id: "snow-5",
               label: "5",
               done: makeDoneMap({ clean: true, translate: true }),
+              takenBy: makeTakenByMap({}),
               roleDeadlines: makeDeadlinesMap({}),
               isEditing: false
             },
@@ -627,6 +695,7 @@
               id: "snow-6",
               label: "6",
               done: makeDoneMap({ clean: true, translate: true }),
+              takenBy: makeTakenByMap({}),
               roleDeadlines: makeDeadlinesMap({}),
               isEditing: false
             },
@@ -634,6 +703,7 @@
               id: "snow-7",
               label: "7",
               done: makeDoneMap({ clean: true, translate: true }),
+              takenBy: makeTakenByMap({}),
               roleDeadlines: makeDeadlinesMap({}),
               isEditing: false
             },
@@ -641,6 +711,7 @@
               id: "snow-8",
               label: "8",
               done: makeDoneMap({ clean: true }),
+              takenBy: makeTakenByMap({}),
               roleDeadlines: makeDeadlinesMap({}),
               isEditing: false
             }
@@ -658,11 +729,12 @@
         if (!proj) return;
         const wf = WORKFLOW_MODES[proj.workflowMode] ? proj.workflowMode : "classic";
         const st = PROJECT_STATUSES[proj.status] ? proj.status : "active";
+        const rawChapters = Array.isArray(proj.chapters) ? proj.chapters : [];
         normalized[key] = {
           ...proj,
           status: st,
           workflowMode: wf,
-          chapters: Array.isArray(proj.chapters) ? proj.chapters : []
+          chapters: rawChapters.map(normalizeChapter)
         };
       });
       return normalized;
@@ -1018,28 +1090,27 @@
       render();
     }
 
-    function askRemoveUser(userKey) {
-      if (!state.leadUnlocked || !userKey) return;
-      state.confirmDeleteUserKey = userKey;
+    function takeChapterInWork(projectId, chapterId, roleId) {
+      const project = state.projects[projectId];
+      if (!project || !isProjectActive(project)) return;
+      const ch = project.chapters.find((c) => c.id === chapterId);
+      if (!ch) return;
+      if (ch.done[roleId] || !isUnlockedForRole(project, ch, roleId)) return;
+      recordCurrentUserMeta();
+      if (!ch.takenBy) ch.takenBy = makeTakenByMap({});
+      ch.takenBy[roleId] = getActorDisplayName();
+      state.confirmReopenKey = null;
+      saveState(true);
       render();
     }
 
-    function cancelRemoveUser() {
-      state.confirmDeleteUserKey = null;
-      render();
-    }
-
-    function confirmRemoveUser(userKey) {
-      if (!state.leadUnlocked || !userKey) return;
-      const nextBounds = normalizeUserBoundRoles(state.userBoundRoles);
-      delete nextBounds[userKey];
-      state.userBoundRoles = nextBounds;
-
-      const nextUsers = normalizeKnownUsers(state.knownUsers);
-      delete nextUsers[userKey];
-      state.knownUsers = nextUsers;
-
-      state.confirmDeleteUserKey = null;
+    function releaseChapterFromWork(projectId, chapterId, roleId) {
+      const project = state.projects[projectId];
+      if (!project || !isProjectActive(project)) return;
+      const ch = project.chapters.find((c) => c.id === chapterId);
+      if (!ch) return;
+      if (!ch.takenBy) ch.takenBy = makeTakenByMap({});
+      ch.takenBy[roleId] = "";
       saveState(true);
       render();
     }
@@ -1065,6 +1136,10 @@
         return;
       }
       ch.done[roleId] = Boolean(value);
+      if (!ch.takenBy) ch.takenBy = makeTakenByMap({});
+      if (value) {
+        ch.takenBy[roleId] = "";
+      }
       state.confirmReopenKey = null;
       saveState(true);
       render();
@@ -1202,6 +1277,7 @@
         id: `${projectId}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
         label: cleanLabel,
         done: makeDoneMap({}),
+        takenBy: makeTakenByMap({}),
         roleDeadlines: makeDeadlinesMap({}),
         isEditing: false
       });
@@ -1213,6 +1289,8 @@
       const missing = getMissingDeps(project, ch, currentRole.id);
       const unlocked = missing.length === 0;
       const isDone = Boolean(ch.done[currentRole.id]);
+      const takenBy = (!isDone && ch.takenBy && ch.takenBy[currentRole.id]) || "";
+      const isTaken = Boolean(takenBy);
       const roleDeadline = (ch.roleDeadlines && ch.roleDeadlines[currentRole.id]) || "";
       const missingNames = missing.map((id) => getRole(id).name).join(" + ");
       const reopenKey = `${project.id}::${ch.id}::${currentRole.id}`;
@@ -1223,32 +1301,45 @@
         !activeProject ? "archived" : isDone ? "done-muted" : !unlocked ? "locked" : ""
       ].filter(Boolean).join(" ");
 
+      let statusBadge = "";
+      if (!activeProject) {
+        statusBadge = `<span class="badge closed">${escapeHtml(statusLabel)}</span>`;
+      } else if (isDone) {
+        statusBadge = `<span class="badge ok">Готово</span>`;
+      } else if (!unlocked) {
+        statusBadge = `<span class="badge">Ожидает: ${escapeHtml(missingNames)}</span>`;
+      } else if (isTaken) {
+        statusBadge = `<span class="badge work">В работе · ${escapeHtml(takenBy)}</span>`;
+      } else {
+        statusBadge = `<span class="badge avail">Свободно</span>`;
+      }
+
+      let actionButtons = "";
+      if (!activeProject) {
+        actionButtons = `<button class="btn-small" disabled>Закрыто</button>`;
+      } else if (isDone) {
+        actionButtons = `<button class="btn-small btn-reopen" onclick="setChapterDone('${project.id}', '${ch.id}', '${currentRole.id}', false)">Вернуть в работу</button>`;
+      } else if (!unlocked) {
+        actionButtons = `<button class="btn-small" disabled>Недоступно</button>`;
+      } else if (isTaken) {
+        actionButtons = `
+          <button class="btn-small btn-done" onclick="setChapterDone('${project.id}', '${ch.id}', '${currentRole.id}', true)">Готово</button>
+          <button class="btn-small" onclick="releaseChapterFromWork('${project.id}', '${ch.id}', '${currentRole.id}')">Отпустить</button>
+        `;
+      } else {
+        actionButtons = `<button class="btn-small btn-take" onclick="takeChapterInWork('${project.id}', '${ch.id}', '${currentRole.id}')">Взять в работу</button>`;
+      }
+
       return `
         <div class="${cardClasses}">
           <div class="chapter-head">
             <div class="row">
-              <span class="chapter-title">Глава ${ch.label}</span>
-              ${
-                !activeProject
-                  ? `<span class="badge closed">${statusLabel}</span>`
-                  : isDone
-                    ? `<span class="badge ok">Готово</span>`
-                    : !unlocked
-                      ? `<span class="badge">Ожидает: ${missingNames}</span>`
-                      : `<span class="badge work">В работе</span>`
-              }
-              <span class="badge">${roleDeadline ? `Дедлайн: ${roleDeadline}` : "Без дедлайна"}</span>
+              <span class="chapter-title">Глава ${escapeHtml(ch.label)}</span>
+              ${statusBadge}
+              <span class="badge">${roleDeadline ? `Дедлайн: ${escapeHtml(roleDeadline)}` : "Без дедлайна"}</span>
             </div>
             <div class="row">
-              ${
-                !activeProject
-                  ? `<button class="btn-small" disabled>Закрыто</button>`
-                  : !unlocked && !isDone
-                    ? `<button class="btn-small" disabled>Недоступно</button>`
-                    : isDone
-                      ? `<button class="btn-small btn-reopen" onclick="setChapterDone('${project.id}', '${ch.id}', '${currentRole.id}', false)">Вернуть в работу</button>`
-                      : `<button class="btn-small btn-done" onclick="setChapterDone('${project.id}', '${ch.id}', '${currentRole.id}', true)">Готово</button>`
-              }
+              ${actionButtons}
             </div>
           </div>
 
@@ -1257,7 +1348,7 @@
               ? `
                 <div class="confirm-warn-box">
                   <span style="font-size: 13px;">
-                    Вернуть этап <strong>«${currentRole.name}»</strong> на главе <strong>${ch.label}</strong> в работу?
+                    Вернуть этап <strong>«${escapeHtml(currentRole.name)}»</strong> на главе <strong>${escapeHtml(ch.label)}</strong> в работу?
                   </span>
                   <div class="row">
                     <button class="btn-small btn-reopen" onclick="setChapterDone('${project.id}', '${ch.id}', '${currentRole.id}', false, true)">Да</button>
@@ -1271,21 +1362,24 @@
           <div class="meta-line">
             ${
               currentRoleDeps.length
-                ? `Зависимости роли «${currentRole.name}»: ${currentRoleDeps.map((d) => getRole(d).name).join(" + ")}`
-                : `Роль «${currentRole.name}» не ждёт предыдущих этапов`
+                ? `Зависимости роли «${escapeHtml(currentRole.name)}»: ${currentRoleDeps.map((d) => escapeHtml(getRole(d).name)).join(" + ")}`
+                : `Роль «${escapeHtml(currentRole.name)}» не ждёт предыдущих этапов`
             }
           </div>
 
           <div class="roles-summary">
             ${ROLES.map((r) => {
               const done = Boolean(ch.done[r.id]);
-              const ready = !done && activeProject && isUnlockedForRole(project, ch, r.id);
+              const whoTook = (!done && ch.takenBy && ch.takenBy[r.id]) || "";
+              const ready = !done && !whoTook && activeProject && isUnlockedForRole(project, ch, r.id);
               const dl = ch.roleDeadlines && ch.roleDeadlines[r.id];
-              const icon = done ? "✓" : ready ? "▸" : "○";
-              const cls = done ? "done" : ready ? "ready" : "";
+              const icon = done ? "✓" : whoTook ? "●" : ready ? "▸" : "○";
+              const cls = done ? "done" : whoTook ? "taken" : ready ? "ready" : "";
+              const whoSuffix = whoTook ? ` · ${whoTook}` : "";
+              const dlSuffix = dl ? ` (${dl})` : "";
               return `
                 <span class="role-mini ${cls}">
-                  ${icon} ${r.name}${dl ? ` (${dl})` : ""}
+                  ${icon} ${escapeHtml(r.name)}${escapeHtml(whoSuffix)}${escapeHtml(dlSuffix)}
                 </span>
               `;
             }).join("")}
@@ -1337,7 +1431,7 @@
         <div class="topbar">
           <div>
             <h1>Трекер глав команды</h1>
-            <div class="sub">${userLabel} · ${syncStatus}</div>
+            <div class="sub">${escapeHtml(userLabel)} · ${escapeHtml(syncStatus)}</div>
           </div>
           <div class="mode-switch">
             <button class="btn-small" onclick="pullSharedState()" title="Обновить данные из Google Таблицы">↻ Обновить</button>
@@ -1394,7 +1488,7 @@
                       const closedTag = item.projectStatus !== "active" ? ` · ${PROJECT_STATUSES[item.projectStatus]}` : "";
                       return `
                         <button class="${isSelected ? "active" : ""}" onclick="selectAssignment('${item.projectId}', '${item.roleId}')">
-                          ${item.projectName} (${item.roleName})${closedTag}
+                          ${escapeHtml(item.projectName)} (${escapeHtml(item.roleName)})${escapeHtml(closedTag)}
                         </button>
                       `;
                     }).join("")}
@@ -1406,7 +1500,7 @@
                       const pClosed = (p.status || "active") !== "active";
                       return `
                         <button class="${p.id === project.id ? "active" : ""}" onclick="state.selectedProjectId='${p.id}'; state.confirmDeleteProjectId=null; state.confirmReopenKey=null; state.showCompletedChapters=false; syncSelectedRoleWithBound('${p.id}'); saveState(true); render();">
-                          ${p.name}${pClosed ? ` (${PROJECT_STATUSES[p.status]})` : ""}
+                          ${escapeHtml(p.name)}${pClosed ? ` (${escapeHtml(PROJECT_STATUSES[p.status])})` : ""}
                         </button>
                       `;
                     }).join("")}
@@ -1415,10 +1509,10 @@
             }
 
             <div class="row">
-              <span class="badge ${activeProject ? "ok" : "closed"}">Статус: ${statusLabel}</span>
-              <span class="badge">Режим: ${workflow.label}</span>
-              ${myRolesCompact ? `<span class="badge work">Роль: ${currentRole.name}</span>` : ""}
-              <span class="sub">${project.note}</span>
+              <span class="badge ${activeProject ? "ok" : "closed"}">Статус: ${escapeHtml(statusLabel)}</span>
+              <span class="badge">Режим: ${escapeHtml(workflow.label)}</span>
+              ${myRolesCompact ? `<span class="badge work">Роль: ${escapeHtml(currentRole.name)}</span>` : ""}
+              <span class="sub">${escapeHtml(project.note)}</span>
             </div>
           </div>
         `;
@@ -1435,7 +1529,7 @@
                     const isBound = boundRolesInProject.includes(r.id);
                     return `
                       <button class="role-chip ${r.id === currentRole.id ? "active" : ""} ${isBound ? "bound" : ""}" onclick="state.selectedRoleId='${r.id}'; state.confirmReopenKey=null; state.showCompletedChapters=false; saveState(false); render();">
-                        ${r.name}
+                        ${escapeHtml(r.name)}
                       </button>
                     `;
                   }).join("")}
@@ -1447,7 +1541,7 @@
                   <span class="sub">
                     ${
                       !activeProject
-                        ? `Проект в статусе «${statusLabel}»: закрепление ролей и отметки закрыты`
+                        ? `Проект в статусе «${escapeHtml(statusLabel)}»: закрепление ролей и отметки закрыты`
                         : hasAnyAssignment
                           ? "Закреплённые роли отмечены ★; нажмите «Только мои роли» вверху, чтобы оставить только свои плашки"
                           : "Закрепите роль звёздочкой ★, чтобы вверху появился режим «Только мои роли»"
@@ -1483,8 +1577,8 @@
                 <span class="sub">
                   ${
                     state.showCompletedChapters
-                      ? `Главы, где роль «${currentRole.name}» уже отмечена готовой`
-                      : `Сначала показаны доступные и ожидающие главы; сделанные приглушены`
+                      ? `Главы, где роль «${escapeHtml(currentRole.name)}» уже отмечена готовой`
+                      : `Нажмите «Взять в работу», чтобы показать напарникам и руководству, что глава взята`
                   }
                 </span>
               </div>
@@ -1492,7 +1586,7 @@
 
             if (state.showCompletedChapters) {
               if (doneChapters.length === 0) {
-                html += `<div class="panel"><div class="sub">По роли «${currentRole.name}» пока нет сделанных глав.</div></div>`;
+                html += `<div class="panel"><div class="sub">По роли «${escapeHtml(currentRole.name)}» пока нет сделанных глав.</div></div>`;
               } else {
                 doneChapters.forEach((ch) => {
                   html += renderChapterCardForMember(project, ch, currentRole, activeProject, statusLabel, currentRoleDeps);
@@ -1502,7 +1596,7 @@
               if (activeQueueChapters.length === 0) {
                 html += `
                   <div class="panel">
-                    <div class="sub">Все главы по роли «${currentRole.name}» уже сделаны. Откройте вкладку «Сделанные (${doneChapters.length})», чтобы посмотреть их.</div>
+                    <div class="sub">Все главы по роли «${escapeHtml(currentRole.name)}» уже сделаны. Откройте вкладку «Сделанные (${doneChapters.length})», чтобы посмотреть их.</div>
                   </div>
                 `;
               } else {
@@ -1532,8 +1626,8 @@
             <div class="panel ${!activeProject ? "archived" : ""}">
               <div class="row" style="justify-content: space-between; margin-bottom: 10px;">
                 <div class="row">
-                  <span class="chapter-title">Проект «${project.name}»</span>
-                  <span class="badge ${activeProject ? "ok" : "closed"}">${statusLabel}</span>
+                  <span class="chapter-title">Проект «${escapeHtml(project.name)}»</span>
+                  <span class="badge ${activeProject ? "ok" : "closed"}">${escapeHtml(statusLabel)}</span>
                 </div>
                 <div class="row">
                   <span class="label-inline">Статус:</span>
@@ -1557,7 +1651,7 @@
                 <span class="label-inline">Режим этапов:</span>
                 <select ${!activeProject ? "disabled" : ""} onchange="setProjectWorkflowMode('${project.id}', this.value)">
                   ${Object.entries(WORKFLOW_MODES).map(([key, cfg]) => `
-                    <option value="${key}" ${(project.workflowMode || "classic") === key ? "selected" : ""}>${cfg.label}</option>
+                    <option value="${key}" ${(project.workflowMode || "classic") === key ? "selected" : ""}>${escapeHtml(cfg.label)}</option>
                   `).join("")}
                 </select>
               </div>
@@ -1567,7 +1661,7 @@
                   ? `
                     <div class="confirm-box">
                       <span style="font-size: 13px;">
-                        Уверены, что хотите удалить проект <strong>«${project.name}»</strong> со всеми его главами?
+                        Уверены, что хотите удалить проект <strong>«${escapeHtml(project.name)}»</strong> со всеми его главами?
                       </span>
                       <div class="row">
                         <button class="btn-small btn-danger-solid" onclick="confirmDeleteProject('${project.id}')">Да</button>
@@ -1585,8 +1679,8 @@
               <div class="hint">
                 ${
                   activeProject
-                    ? "Дедлайны задаются отдельно по каждой роли внутри «Редактировать» на главе."
-                    : `Проект имеет статус «${statusLabel}»: главы, дедлайны и закрепление ролей заблокированы до возврата статуса «В работе».`
+                    ? "✓ — выполнено, ● — взято в работу (с указанием исполнителя), ○ — не начато."
+                    : `Проект имеет статус «${escapeHtml(statusLabel)}»: главы, дедлайны и закрепление ролей заблокированы до возврата статуса «В работе».`
                 }
               </div>
             </div>
@@ -1601,8 +1695,8 @@
               <div class="chapter-card ${!activeProject ? "archived" : ""}">
                 <div class="chapter-head">
                   <div class="row">
-                    <span class="chapter-title">Глава ${ch.label}</span>
-                    <span class="badge">${deadlinesList.length ? deadlinesList.join(" · ") : "Без дедлайнов"}</span>
+                    <span class="chapter-title">Глава ${escapeHtml(ch.label)}</span>
+                    <span class="badge">${deadlinesList.length ? escapeHtml(deadlinesList.join(" · ")) : "Без дедлайнов"}</span>
                   </div>
                   <button class="btn-small ${ch.isEditing ? "active" : ""}" ${!activeProject ? "disabled" : ""} onclick="toggleEditChapter('${project.id}', '${ch.id}')">
                     ${ch.isEditing ? "Свернуть" : "Редактировать"}
@@ -1612,10 +1706,15 @@
                 <div class="roles-summary">
                   ${ROLES.map((r) => {
                     const done = Boolean(ch.done[r.id]);
+                    const whoTook = (!done && ch.takenBy && ch.takenBy[r.id]) || "";
                     const dl = ch.roleDeadlines && ch.roleDeadlines[r.id];
+                    const icon = done ? "✓" : whoTook ? "●" : "○";
+                    const cls = done ? "done" : whoTook ? "taken" : "";
+                    const takenText = whoTook ? ` · в работе: ${whoTook}` : "";
+                    const dlText = dl ? ` (${dl})` : "";
                     return `
-                      <span class="role-mini ${done ? "done" : ""}">
-                        ${done ? "✓" : "○"} ${r.name}${dl ? ` (${dl})` : ""}
+                      <span class="role-mini ${cls}">
+                        ${icon} ${escapeHtml(r.name)}${escapeHtml(takenText)}${escapeHtml(dlText)}
                       </span>
                     `;
                   }).join("")}
@@ -1627,7 +1726,7 @@
                       <div class="editor-box">
                         <div class="row" style="margin-bottom: 10px;">
                           <span class="label-inline">Название / номер главы:</span>
-                          <input type="text" class="compact" value="${ch.label.replace(/"/g, "&quot;")}" onchange="updateChapterField('${project.id}', '${ch.id}', 'label', this.value); render();" />
+                          <input type="text" class="compact" value="${escapeHtml(ch.label)}" onchange="updateChapterField('${project.id}', '${ch.id}', 'label', this.value); render();" />
                           <button class="btn-small btn-danger" style="margin-left:auto;" onclick="deleteChapter('${project.id}', '${ch.id}')">Удалить главу</button>
                         </div>
 
@@ -1638,10 +1737,10 @@
                             return `
                               <div class="role-dl-item">
                                 <div class="role-dl-top">
-                                  <span>${r.name}</span>
+                                  <span>${escapeHtml(r.name)}</span>
                                   ${val ? `<button class="btn-small" onclick="clearRoleDeadline('${project.id}', '${ch.id}', '${r.id}')">Очистить</button>` : `<span class="sub">нет</span>`}
                                 </div>
-                                <input type="text" placeholder="Напр. 23.11 или пт" value="${val.replace(/"/g, "&quot;")}" onchange="updateRoleDeadline('${project.id}', '${ch.id}', '${r.id}', this.value)" />
+                                <input type="text" placeholder="Напр. 23.11 или пт" value="${escapeHtml(val)}" onchange="updateRoleDeadline('${project.id}', '${ch.id}', '${r.id}', this.value)" />
                               </div>
                             `;
                           }).join("")}
@@ -1678,8 +1777,8 @@
                     return `
                       <div class="member-row">
                         <div>
-                          <div style="font-size: 13px; font-weight: 600;">${m.label} <span class="sub">(${m.userKey})</span></div>
-                          <div class="sub">${m.perProject.length ? m.perProject.join(" · ") : "Ролей пока нет"}</div>
+                          <div style="font-size: 13px; font-weight: 600;">${escapeHtml(m.label)} <span class="sub">(${escapeHtml(m.userKey)})</span></div>
+                          <div class="sub">${m.perProject.length ? escapeHtml(m.perProject.join(" · ")) : "Ролей пока нет"}</div>
                         </div>
                         <div class="row">
                           ${
