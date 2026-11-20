@@ -173,6 +173,15 @@
       border-style: dashed;
     }
 
+    .panel-head {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+
     .row {
       display: flex;
       flex-wrap: wrap;
@@ -633,6 +642,25 @@
       return next;
     }
 
+    function getAllUserAssignments(userBoundRoles, projects, userKey) {
+      const items = [];
+      Object.values(projects || {}).forEach((proj) => {
+        if (!proj) return;
+        const bound = getBoundRolesForUser(userBoundRoles, userKey, proj.id);
+        bound.forEach((roleId) => {
+          const role = getRole(roleId);
+          items.push({
+            projectId: proj.id,
+            projectName: proj.name,
+            projectStatus: proj.status || "active",
+            roleId: role.id,
+            roleName: role.name
+          });
+        });
+      });
+      return items;
+    }
+
     function syncSelectedRoleWithBound(projectId) {
       if (!projectId) return;
       const userKey = getCurrentUserKey();
@@ -830,6 +858,15 @@
       return getMissingDeps(project, chapter, roleId).length === 0;
     }
 
+    function selectAssignment(projectId, roleId) {
+      state.selectedProjectId = projectId;
+      state.selectedRoleId = roleId;
+      state.confirmDeleteProjectId = null;
+      state.confirmReopenKey = null;
+      saveState(true);
+      render();
+    }
+
     function toggleRoleBinding(projectId, roleId) {
       const project = state.projects[projectId];
       if (!project || !isProjectActive(project)) return;
@@ -1009,28 +1046,35 @@
     }
 
     function render() {
-      const projectList = Object.values(state.projects);
-      const project = state.projects[state.selectedProjectId] || projectList[0];
-      if (project && state.selectedProjectId !== project.id) {
-        state.selectedProjectId = project.id;
-      }
-
+      const isMemberView = state.mode === "member" || !state.leadUnlocked;
       const userKey = getCurrentUserKey();
-      const boundRoles = project ? getBoundRolesForUser(state.userBoundRoles, userKey, project.id) : [];
-      const hasBoundRoles = boundRoles.length > 0;
-      const effectiveOnlyMyRoles = state.onlyMyRoles && hasBoundRoles;
+      const assignments = getAllUserAssignments(state.userBoundRoles, state.projects, userKey);
+      const hasAnyAssignment = assignments.length > 0;
+      const myRolesCompact = isMemberView && state.onlyMyRoles && hasAnyAssignment;
 
-      const visibleRoles = effectiveOnlyMyRoles
-        ? ROLES.filter((r) => boundRoles.includes(r.id))
-        : ROLES;
+      let project = null;
+      let currentRole = getRole(state.selectedRoleId);
 
-      const currentRole = visibleRoles.find((r) => r.id === state.selectedRoleId)
-        || visibleRoles[0]
-        || getRole(state.selectedRoleId);
-      if (state.selectedRoleId !== currentRole.id) {
-        state.selectedRoleId = currentRole.id;
+      if (myRolesCompact) {
+        const matched = assignments.find(
+          (a) => a.projectId === state.selectedProjectId && a.roleId === state.selectedRoleId
+        ) || assignments[0];
+        project = state.projects[matched.projectId];
+        currentRole = getRole(matched.roleId);
+        if (state.selectedProjectId !== project.id || state.selectedRoleId !== currentRole.id) {
+          state.selectedProjectId = project.id;
+          state.selectedRoleId = currentRole.id;
+        }
+      } else {
+        const projectList = Object.values(state.projects);
+        project = state.projects[state.selectedProjectId] || projectList[0] || null;
+        if (project && state.selectedProjectId !== project.id) {
+          state.selectedProjectId = project.id;
+        }
       }
 
+      const projectList = Object.values(state.projects);
+      const boundRolesInProject = project ? getBoundRolesForUser(state.userBoundRoles, userKey, project.id) : [];
       const activeProject = project ? isProjectActive(project) : false;
       const statusLabel = project ? (PROJECT_STATUSES[project.status || "active"] || "В работе") : "";
       const workflow = project ? getWorkflowMode(project) : WORKFLOW_MODES.classic;
@@ -1077,66 +1121,95 @@
       if (project) {
         html += `
           <div class="panel ${!activeProject ? "archived" : ""}">
-            <div class="row" style="margin-bottom: 10px;">
-              <span class="label-inline">Проект:</span>
-              ${projectList.map((p) => {
-                const pClosed = (p.status || "active") !== "active";
-                return `
-                  <button class="${p.id === project.id ? "active" : ""}" onclick="state.selectedProjectId='${p.id}'; state.confirmDeleteProjectId=null; state.confirmReopenKey=null; syncSelectedRoleWithBound('${p.id}'); saveState(true); render();">
-                    ${p.name}${pClosed ? ` (${PROJECT_STATUSES[p.status]})` : ""}
-                  </button>
-                `;
-              }).join("")}
+            <div class="panel-head">
+              <span class="label-inline">${myRolesCompact ? "Мои тайтлы и роли:" : "Проект:"}</span>
+              ${
+                isMemberView
+                  ? `
+                    <button
+                      class="btn-small ${myRolesCompact ? "active" : ""}"
+                      ${!hasAnyAssignment ? "disabled title='Сначала закрепите хотя бы одну роль звёздочкой ★'" : ""}
+                      onclick="state.onlyMyRoles = !state.onlyMyRoles; state.confirmReopenKey=null; saveState(false); render();"
+                    >
+                      ${myRolesCompact ? "★ Только мои роли" : "Показать только мои роли"}
+                    </button>
+                  `
+                  : ""
+              }
             </div>
+
+            ${
+              myRolesCompact
+                ? `
+                  <div class="row" style="margin-bottom: 10px;">
+                    ${assignments.map((item) => {
+                      const isSelected = item.projectId === project.id && item.roleId === currentRole.id;
+                      const closedTag = item.projectStatus !== "active" ? ` · ${PROJECT_STATUSES[item.projectStatus]}` : "";
+                      return `
+                        <button class="${isSelected ? "active" : ""}" onclick="selectAssignment('${item.projectId}', '${item.roleId}')">
+                          ${item.projectName} (${item.roleName})${closedTag}
+                        </button>
+                      `;
+                    }).join("")}
+                  </div>
+                `
+                : `
+                  <div class="row" style="margin-bottom: 10px;">
+                    ${projectList.map((p) => {
+                      const pClosed = (p.status || "active") !== "active";
+                      return `
+                        <button class="${p.id === project.id ? "active" : ""}" onclick="state.selectedProjectId='${p.id}'; state.confirmDeleteProjectId=null; state.confirmReopenKey=null; syncSelectedRoleWithBound('${p.id}'); saveState(true); render();">
+                          ${p.name}${pClosed ? ` (${PROJECT_STATUSES[p.status]})` : ""}
+                        </button>
+                      `;
+                    }).join("")}
+                  </div>
+                `
+            }
+
             <div class="row">
               <span class="badge ${activeProject ? "ok" : "closed"}">Статус: ${statusLabel}</span>
               <span class="badge">Режим: ${workflow.label}</span>
+              ${myRolesCompact ? `<span class="badge work">Роль: ${currentRole.name}</span>` : ""}
               <span class="sub">${project.note}</span>
             </div>
           </div>
         `;
       }
 
-      if (state.mode === "member" || !state.leadUnlocked) {
+      if (isMemberView) {
         if (project) {
-          html += `
-            <div class="panel ${!activeProject ? "archived" : ""}">
-              <div class="row" style="justify-content: space-between; margin-bottom: 8px;">
-                <span class="label-inline">Ваша роль:</span>
-                <button
-                  class="btn-small ${effectiveOnlyMyRoles ? "active" : ""}"
-                  ${!hasBoundRoles ? "disabled title='Сначала закрепите хотя бы одну роль звёздочкой ★'" : ""}
-                  onclick="state.onlyMyRoles = !state.onlyMyRoles; state.confirmReopenKey=null; saveState(false); render();"
-                >
-                  ${effectiveOnlyMyRoles ? "★ Только мои роли" : "Показать только мои роли"}
-                </button>
+          if (!myRolesCompact) {
+            html += `
+              <div class="panel ${!activeProject ? "archived" : ""}">
+                <div class="row" style="margin-bottom: 8px;">
+                  <span class="label-inline">Ваша роль:</span>
+                  ${ROLES.map((r) => {
+                    const isBound = boundRolesInProject.includes(r.id);
+                    return `
+                      <button class="role-chip ${r.id === currentRole.id ? "active" : ""} ${isBound ? "bound" : ""}" onclick="state.selectedRoleId='${r.id}'; state.confirmReopenKey=null; saveState(false); render();">
+                        ${r.name}
+                      </button>
+                    `;
+                  }).join("")}
+                </div>
+                <div class="row">
+                  <button class="btn-small" ${!activeProject ? "disabled" : ""} onclick="toggleRoleBinding('${project.id}', '${currentRole.id}')">
+                    ${boundRolesInProject.includes(currentRole.id) ? "★ Роль закреплена за профилем (убрать)" : "☆ Закрепить роль за профилем"}
+                  </button>
+                  <span class="sub">
+                    ${
+                      !activeProject
+                        ? `Проект в статусе «${statusLabel}»: закрепление ролей и отметки закрыты`
+                        : hasAnyAssignment
+                          ? "Закреплённые роли отмечены ★; нажмите «Только мои роли» вверху, чтобы оставить только свои плашки"
+                          : "Закрепите роль звёздочкой ★, чтобы вверху появился режим «Только мои роли»"
+                    }
+                  </span>
+                </div>
               </div>
-              <div class="row" style="margin-bottom: 8px;">
-                ${visibleRoles.map((r) => {
-                  const isBound = boundRoles.includes(r.id);
-                  return `
-                    <button class="role-chip ${r.id === currentRole.id ? "active" : ""} ${isBound ? "bound" : ""}" onclick="state.selectedRoleId='${r.id}'; state.confirmReopenKey=null; saveState(false); render();">
-                      ${r.name}
-                    </button>
-                  `;
-                }).join("")}
-              </div>
-              <div class="row">
-                <button class="btn-small" ${!activeProject ? "disabled" : ""} onclick="toggleRoleBinding('${project.id}', '${currentRole.id}')">
-                  ${boundRoles.includes(currentRole.id) ? "★ Роль закреплена за профилем (убрать)" : "☆ Закрепить роль за профилем"}
-                </button>
-                <span class="sub">
-                  ${
-                    !activeProject
-                      ? `Проект в статусе «${statusLabel}»: закрепление ролей и отметки закрыты`
-                      : hasBoundRoles
-                        ? "Закреплённые роли отмечены ★; при входе сразу включаются ваши роли"
-                        : "Закрепите роль звёздочкой ★, чтобы при входе открывались только ваши роли"
-                  }
-                </span>
-              </div>
-            </div>
-          `;
+            `;
+          }
 
           if (project.chapters.length === 0) {
             html += `<div class="panel"><div class="sub">Глав пока нет.</div></div>`;
