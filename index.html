@@ -280,12 +280,19 @@
       border-radius: 7px;
       background: var(--surface-2);
       border: 1px solid var(--border);
+      color: var(--muted);
     }
 
     .role-mini.done {
       border-color: rgba(46, 204, 113, 0.45);
       color: #a7f3c5;
       background: rgba(46, 204, 113, 0.1);
+    }
+
+    .role-mini.ready {
+      border-color: rgba(243, 156, 18, 0.4);
+      color: #ffd28a;
+      background: rgba(243, 156, 18, 0.09);
     }
 
     .editor-box {
@@ -302,6 +309,19 @@
       border-radius: 9px;
       border: 1px solid rgba(231, 76, 60, 0.45);
       background: rgba(231, 76, 60, 0.1);
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .confirm-warn-box {
+      margin-top: 10px;
+      padding: 9px 12px;
+      border-radius: 9px;
+      border: 1px solid rgba(243, 156, 18, 0.45);
+      background: rgba(243, 156, 18, 0.1);
       display: flex;
       flex-wrap: wrap;
       align-items: center;
@@ -477,6 +497,8 @@
       showLeadAuthPrompt: false,
       leadAuthError: false,
       confirmDeleteProjectId: null,
+      confirmReopenKey: null,
+      onlyMyRoles: true,
       selectedProjectId: "lotus",
       selectedRoleId: "edit",
       userBoundRoles: {},
@@ -611,11 +633,22 @@
       return next;
     }
 
+    function syncSelectedRoleWithBound(projectId) {
+      if (!projectId) return;
+      const userKey = getCurrentUserKey();
+      const bound = getBoundRolesForUser(state.userBoundRoles, userKey, projectId);
+      if (bound.length > 0 && !bound.includes(state.selectedRoleId)) {
+        state.selectedRoleId = bound[0];
+      }
+    }
+
     function normalizeLoadedState(parsed) {
       const merged = {
         ...structuredClone(DEFAULT_STATE),
         ...(parsed || {}),
         confirmDeleteProjectId: null,
+        confirmReopenKey: null,
+        onlyMyRoles: parsed && typeof parsed.onlyMyRoles === "boolean" ? parsed.onlyMyRoles : true,
         userBoundRoles: normalizeUserBoundRoles(parsed && parsed.userBoundRoles),
         projects: normalizeProjectsMap(parsed && parsed.projects)
       };
@@ -636,10 +669,15 @@
     }
 
     let state = loadLocalState();
+    syncSelectedRoleWithBound(state.selectedProjectId);
 
     function saveLocalState() {
       try {
-        const toSave = { ...state, confirmDeleteProjectId: null };
+        const toSave = {
+          ...state,
+          confirmDeleteProjectId: null,
+          confirmReopenKey: null
+        };
         localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
       } catch (e) {}
     }
@@ -693,7 +731,6 @@
         }
         if (data.state) {
           const remote = data.state;
-          const userKey = getCurrentUserKey();
           const remoteUserMap = normalizeUserBoundRoles(remote.userBoundRoles);
           const mergedUserMap = normalizeUserBoundRoles(state.userBoundRoles);
 
@@ -701,12 +738,14 @@
             mergedUserMap[uKey] = projMap;
           });
 
+          const nextProjectId = remote.selectedProjectId || state.selectedProjectId;
           state = normalizeLoadedState({
             ...state,
-            selectedProjectId: remote.selectedProjectId || state.selectedProjectId,
+            selectedProjectId: nextProjectId,
             userBoundRoles: mergedUserMap,
             projects: remote.projects || state.projects
           });
+          syncSelectedRoleWithBound(nextProjectId);
           saveLocalState();
           syncStatus = "Google Таблица подключена";
         } else {
@@ -759,6 +798,7 @@
       state.showLeadAuthPrompt = false;
       state.leadAuthError = false;
       state.confirmDeleteProjectId = null;
+      state.confirmReopenKey = null;
       saveState(false);
       render();
     }
@@ -803,13 +843,28 @@
       render();
     }
 
-    function setChapterDone(projectId, chapterId, roleId, value) {
+    function askReopenChapterDone(projectId, chapterId, roleId) {
+      state.confirmReopenKey = `${projectId}::${chapterId}::${roleId}`;
+      render();
+    }
+
+    function cancelReopenChapterDone() {
+      state.confirmReopenKey = null;
+      render();
+    }
+
+    function setChapterDone(projectId, chapterId, roleId, value, skipConfirm = false) {
       const project = state.projects[projectId];
       if (!project || !isProjectActive(project)) return;
       const ch = project.chapters.find((c) => c.id === chapterId);
       if (!ch) return;
       if (value && !isUnlockedForRole(project, ch, roleId)) return;
+      if (!value && !skipConfirm) {
+        askReopenChapterDone(projectId, chapterId, roleId);
+        return;
+      }
       ch.done[roleId] = Boolean(value);
+      state.confirmReopenKey = null;
       saveState(true);
       render();
     }
@@ -851,6 +906,7 @@
       };
       state.selectedProjectId = id;
       state.confirmDeleteProjectId = null;
+      state.confirmReopenKey = null;
       saveState(true);
       render();
     }
@@ -885,6 +941,7 @@
         const remainingIds = Object.keys(state.projects);
         state.selectedProjectId = remainingIds[0] || "";
       }
+      syncSelectedRoleWithBound(state.selectedProjectId);
 
       saveState(true);
       render();
@@ -934,24 +991,17 @@
       render();
     }
 
-    function addChapter(projectId, label, defaultDeadline) {
+    function addChapter(projectId, label) {
       if (!state.leadUnlocked) return;
       const project = state.projects[projectId];
       if (!project || !isProjectActive(project)) return;
       const cleanLabel = (label || "").trim();
       if (!cleanLabel) return;
-      const dl = (defaultDeadline || "").trim();
-      const dlMap = makeDeadlinesMap({});
-      if (dl) {
-        ROLES.forEach((r) => {
-          dlMap[r.id] = dl;
-        });
-      }
       project.chapters.push({
         id: `${projectId}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
         label: cleanLabel,
         done: makeDoneMap({}),
-        roleDeadlines: dlMap,
+        roleDeadlines: makeDeadlinesMap({}),
         isEditing: false
       });
       saveState(true);
@@ -966,8 +1016,21 @@
       }
 
       const userKey = getCurrentUserKey();
-      const currentRole = getRole(state.selectedRoleId);
       const boundRoles = project ? getBoundRolesForUser(state.userBoundRoles, userKey, project.id) : [];
+      const hasBoundRoles = boundRoles.length > 0;
+      const effectiveOnlyMyRoles = state.onlyMyRoles && hasBoundRoles;
+
+      const visibleRoles = effectiveOnlyMyRoles
+        ? ROLES.filter((r) => boundRoles.includes(r.id))
+        : ROLES;
+
+      const currentRole = visibleRoles.find((r) => r.id === state.selectedRoleId)
+        || visibleRoles[0]
+        || getRole(state.selectedRoleId);
+      if (state.selectedRoleId !== currentRole.id) {
+        state.selectedRoleId = currentRole.id;
+      }
+
       const activeProject = project ? isProjectActive(project) : false;
       const statusLabel = project ? (PROJECT_STATUSES[project.status || "active"] || "В работе") : "";
       const workflow = project ? getWorkflowMode(project) : WORKFLOW_MODES.classic;
@@ -987,7 +1050,7 @@
           </div>
           <div class="mode-switch">
             <button class="btn-small" onclick="pullSharedState()" title="Обновить данные из Google Таблицы">↻ Обновить</button>
-            <button class="${state.mode === "member" ? "active" : ""}" onclick="state.mode='member'; state.showLeadAuthPrompt=false; state.confirmDeleteProjectId=null; saveState(false); render();">Участник</button>
+            <button class="${state.mode === "member" ? "active" : ""}" onclick="state.mode='member'; state.showLeadAuthPrompt=false; state.confirmDeleteProjectId=null; state.confirmReopenKey=null; saveState(false); render();">Участник</button>
             <button class="${state.mode === "lead" ? "active" : ""}" onclick="openLeadTab()">${state.leadUnlocked ? "Руководство" : "🔒 Руководство"}</button>
             ${state.leadUnlocked ? `<button class="btn-small" onclick="lockLeadMode()">Заблокировать</button>` : ""}
           </div>
@@ -1019,7 +1082,7 @@
               ${projectList.map((p) => {
                 const pClosed = (p.status || "active") !== "active";
                 return `
-                  <button class="${p.id === project.id ? "active" : ""}" onclick="state.selectedProjectId='${p.id}'; state.confirmDeleteProjectId=null; saveState(true); render();">
+                  <button class="${p.id === project.id ? "active" : ""}" onclick="state.selectedProjectId='${p.id}'; state.confirmDeleteProjectId=null; state.confirmReopenKey=null; syncSelectedRoleWithBound('${p.id}'); saveState(true); render();">
                     ${p.name}${pClosed ? ` (${PROJECT_STATUSES[p.status]})` : ""}
                   </button>
                 `;
@@ -1038,12 +1101,21 @@
         if (project) {
           html += `
             <div class="panel ${!activeProject ? "archived" : ""}">
-              <div class="row" style="margin-bottom: 8px;">
+              <div class="row" style="justify-content: space-between; margin-bottom: 8px;">
                 <span class="label-inline">Ваша роль:</span>
-                ${ROLES.map((r) => {
+                <button
+                  class="btn-small ${effectiveOnlyMyRoles ? "active" : ""}"
+                  ${!hasBoundRoles ? "disabled title='Сначала закрепите хотя бы одну роль звёздочкой ★'" : ""}
+                  onclick="state.onlyMyRoles = !state.onlyMyRoles; state.confirmReopenKey=null; saveState(false); render();"
+                >
+                  ${effectiveOnlyMyRoles ? "★ Только мои роли" : "Показать только мои роли"}
+                </button>
+              </div>
+              <div class="row" style="margin-bottom: 8px;">
+                ${visibleRoles.map((r) => {
                   const isBound = boundRoles.includes(r.id);
                   return `
-                    <button class="role-chip ${r.id === currentRole.id ? "active" : ""} ${isBound ? "bound" : ""}" onclick="state.selectedRoleId='${r.id}'; saveState(false); render();">
+                    <button class="role-chip ${r.id === currentRole.id ? "active" : ""} ${isBound ? "bound" : ""}" onclick="state.selectedRoleId='${r.id}'; state.confirmReopenKey=null; saveState(false); render();">
                       ${r.name}
                     </button>
                   `;
@@ -1054,7 +1126,13 @@
                   ${boundRoles.includes(currentRole.id) ? "★ Роль закреплена за профилем (убрать)" : "☆ Закрепить роль за профилем"}
                 </button>
                 <span class="sub">
-                  ${activeProject ? "Закреплённые роли отмечены звёздочкой ★" : `Проект в статусе «${statusLabel}»: закрепление ролей и отметки закрыты`}
+                  ${
+                    !activeProject
+                      ? `Проект в статусе «${statusLabel}»: закрепление ролей и отметки закрыты`
+                      : hasBoundRoles
+                        ? "Закреплённые роли отмечены ★; при входе сразу включаются ваши роли"
+                        : "Закрепите роль звёздочкой ★, чтобы при входе открывались только ваши роли"
+                  }
                 </span>
               </div>
             </div>
@@ -1069,6 +1147,8 @@
               const isDone = Boolean(ch.done[currentRole.id]);
               const roleDeadline = (ch.roleDeadlines && ch.roleDeadlines[currentRole.id]) || "";
               const missingNames = missing.map((id) => getRole(id).name).join(" + ");
+              const reopenKey = `${project.id}::${ch.id}::${currentRole.id}`;
+              const isConfirmingReopen = state.confirmReopenKey === reopenKey;
 
               html += `
                 <div class="chapter-card ${!activeProject ? "archived" : !unlocked ? "locked" : ""}">
@@ -1098,12 +1178,44 @@
                       }
                     </div>
                   </div>
+
+                  ${
+                    isConfirmingReopen && activeProject && isDone
+                      ? `
+                        <div class="confirm-warn-box">
+                          <span style="font-size: 13px;">
+                            Вернуть этап <strong>«${currentRole.name}»</strong> на главе <strong>${ch.label}</strong> в работу?
+                          </span>
+                          <div class="row">
+                            <button class="btn-small btn-reopen" onclick="setChapterDone('${project.id}', '${ch.id}', '${currentRole.id}', false, true)">Да</button>
+                            <button class="btn-small" onclick="cancelReopenChapterDone()">Нет</button>
+                          </div>
+                        </div>
+                      `
+                      : ""
+                  }
+
                   <div class="meta-line">
                     ${
                       currentRoleDeps.length
                         ? `Зависимости роли «${currentRole.name}»: ${currentRoleDeps.map((d) => getRole(d).name).join(" + ")}`
                         : `Роль «${currentRole.name}» не ждёт предыдущих этапов`
                     }
+                  </div>
+
+                  <div class="roles-summary">
+                    ${ROLES.map((r) => {
+                      const done = Boolean(ch.done[r.id]);
+                      const ready = !done && activeProject && isUnlockedForRole(project, ch, r.id);
+                      const dl = ch.roleDeadlines && ch.roleDeadlines[r.id];
+                      const icon = done ? "✓" : ready ? "▸" : "○";
+                      const cls = done ? "done" : ready ? "ready" : "";
+                      return `
+                        <span class="role-mini ${cls}">
+                          ${icon} ${r.name}${dl ? ` (${dl})` : ""}
+                        </span>
+                      `;
+                    }).join("")}
                   </div>
                 </div>
               `;
@@ -1177,13 +1289,12 @@
 
               <div class="add-form" style="margin-top: 10px;">
                 <input type="text" class="compact" id="new-chap-label" placeholder="Номер главы (напр. 121)" ${!activeProject ? "disabled" : ""} />
-                <input type="text" class="compact" id="new-chap-dl" placeholder="Дедлайн (опц., напр. 30.11)" ${!activeProject ? "disabled" : ""} />
-                <button ${!activeProject ? "disabled" : ""} onclick="addChapter('${project.id}', document.getElementById('new-chap-label').value, document.getElementById('new-chap-dl').value)">+ Добавить главу</button>
+                <button ${!activeProject ? "disabled" : ""} onclick="addChapter('${project.id}', document.getElementById('new-chap-label').value)">+ Добавить главу</button>
               </div>
               <div class="hint">
                 ${
                   activeProject
-                    ? "По умолчанию показана сводка. Нажмите «Редактировать» на нужной главе, чтобы задать или очистить дедлайны по каждой роли."
+                    ? "Дедлайны задаются отдельно по каждой роли внутри «Редактировать» на главе."
                     : `Проект имеет статус «${statusLabel}»: главы, дедлайны и закрепление ролей заблокированы до возврата статуса «В работе».`
                 }
               </div>
