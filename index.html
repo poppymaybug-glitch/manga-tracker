@@ -304,6 +304,23 @@
       background: rgba(243, 156, 18, 0.09);
     }
 
+    .member-row {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      padding: 9px 10px;
+      border-radius: 9px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      margin-bottom: 8px;
+    }
+
+    .member-row:last-child {
+      margin-bottom: 0;
+    }
+
     .editor-box {
       margin-top: 12px;
       border-top: 1px solid var(--border);
@@ -470,12 +487,30 @@
       { id: "beta", name: "Бета" }
     ];
 
-    function getCurrentUserKey() {
+    function getCurrentTgUser() {
       const tgUser = window.Telegram?.WebApp?.initDataUnsafe?.user;
+      if (tgUser && tgUser.id) {
+        return tgUser;
+      }
+      return null;
+    }
+
+    function getCurrentUserKey() {
+      const tgUser = getCurrentTgUser();
       if (tgUser && tgUser.id) {
         return `tg_${tgUser.id}`;
       }
       return "local_guest";
+    }
+
+    function formatTgUserLabel(tgUser, fallbackKey = "") {
+      if (tgUser && (tgUser.first_name || tgUser.username || tgUser.id)) {
+        const namePart = (tgUser.first_name || "").trim();
+        const handlePart = tgUser.username ? `@${tgUser.username}` : (tgUser.id ? `ID ${tgUser.id}` : "");
+        if (namePart && handlePart) return `${namePart} (${handlePart})`;
+        return namePart || handlePart;
+      }
+      return fallbackKey || "Профиль";
     }
 
     function makeDoneMap(partial = {}) {
@@ -506,11 +541,13 @@
       showLeadAuthPrompt: false,
       leadAuthError: false,
       confirmDeleteProjectId: null,
+      confirmDeleteUserKey: null,
       confirmReopenKey: null,
       onlyMyRoles: true,
       selectedProjectId: "lotus",
       selectedRoleId: "edit",
       userBoundRoles: {},
+      knownUsers: {},
       projects: {
         lotus: {
           id: "lotus",
@@ -628,6 +665,35 @@
       return cleanMap;
     }
 
+    function normalizeKnownUsers(rawUsers) {
+      const clean = {};
+      if (!rawUsers || typeof rawUsers !== "object") return clean;
+      Object.entries(rawUsers).forEach(([userKey, info]) => {
+        if (!info || typeof info !== "object") return;
+        clean[userKey] = {
+          first_name: info.first_name || "",
+          username: info.username || "",
+          id: info.id || ""
+        };
+      });
+      return clean;
+    }
+
+    function recordCurrentUserMeta() {
+      const tgUser = getCurrentTgUser();
+      const userKey = getCurrentUserKey();
+      if (tgUser) {
+        state.knownUsers = {
+          ...normalizeKnownUsers(state.knownUsers),
+          [userKey]: {
+            first_name: tgUser.first_name || "",
+            username: tgUser.username || "",
+            id: tgUser.id || ""
+          }
+        };
+      }
+    }
+
     function getBoundRolesForUser(userBoundRoles, userKey, projectId) {
       if (!projectId) return [];
       const userObj = userBoundRoles && userBoundRoles[userKey];
@@ -661,6 +727,43 @@
       return items;
     }
 
+    function getDirectoryMembers() {
+      const keys = new Set([
+        ...Object.keys(state.userBoundRoles || {}),
+        ...Object.keys(state.knownUsers || {})
+      ]);
+      const result = [];
+
+      keys.forEach((userKey) => {
+        const perProject = [];
+        let totalRoles = 0;
+        Object.values(state.projects || {}).forEach((proj) => {
+          if (!proj) return;
+          const bound = getBoundRolesForUser(state.userBoundRoles, userKey, proj.id);
+          if (bound.length > 0) {
+            totalRoles += bound.length;
+            const roleNames = bound.map((rId) => getRole(rId).name).join(", ");
+            perProject.push(`${proj.name}: ${roleNames}`);
+          }
+        });
+
+        const meta = state.knownUsers && state.knownUsers[userKey];
+        const label = formatTgUserLabel(meta, userKey);
+        result.push({
+          userKey,
+          label,
+          perProject,
+          totalRoles
+        });
+      });
+
+      result.sort((a, b) => {
+        if (b.totalRoles !== a.totalRoles) return b.totalRoles - a.totalRoles;
+        return a.label.localeCompare(b.label, "ru");
+      });
+      return result;
+    }
+
     function syncSelectedRoleWithBound(projectId) {
       if (!projectId) return;
       const userKey = getCurrentUserKey();
@@ -675,9 +778,11 @@
         ...structuredClone(DEFAULT_STATE),
         ...(parsed || {}),
         confirmDeleteProjectId: null,
+        confirmDeleteUserKey: null,
         confirmReopenKey: null,
         onlyMyRoles: parsed && typeof parsed.onlyMyRoles === "boolean" ? parsed.onlyMyRoles : true,
         userBoundRoles: normalizeUserBoundRoles(parsed && parsed.userBoundRoles),
+        knownUsers: normalizeKnownUsers(parsed && parsed.knownUsers),
         projects: normalizeProjectsMap(parsed && parsed.projects)
       };
       if (merged.mode === "lead" && !merged.leadUnlocked) {
@@ -697,6 +802,7 @@
     }
 
     let state = loadLocalState();
+    recordCurrentUserMeta();
     syncSelectedRoleWithBound(state.selectedProjectId);
 
     function saveLocalState() {
@@ -704,6 +810,7 @@
         const toSave = {
           ...state,
           confirmDeleteProjectId: null,
+          confirmDeleteUserKey: null,
           confirmReopenKey: null
         };
         localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
@@ -714,6 +821,7 @@
       return {
         selectedProjectId: state.selectedProjectId,
         userBoundRoles: state.userBoundRoles,
+        knownUsers: state.knownUsers,
         projects: state.projects
       };
     }
@@ -766,13 +874,20 @@
             mergedUserMap[uKey] = projMap;
           });
 
+          const mergedKnownUsers = {
+            ...normalizeKnownUsers(state.knownUsers),
+            ...normalizeKnownUsers(remote.knownUsers)
+          };
+
           const nextProjectId = remote.selectedProjectId || state.selectedProjectId;
           state = normalizeLoadedState({
             ...state,
             selectedProjectId: nextProjectId,
             userBoundRoles: mergedUserMap,
+            knownUsers: mergedKnownUsers,
             projects: remote.projects || state.projects
           });
+          recordCurrentUserMeta();
           syncSelectedRoleWithBound(nextProjectId);
           saveLocalState();
           syncStatus = "Google Таблица подключена";
@@ -826,6 +941,7 @@
       state.showLeadAuthPrompt = false;
       state.leadAuthError = false;
       state.confirmDeleteProjectId = null;
+      state.confirmDeleteUserKey = null;
       state.confirmReopenKey = null;
       saveState(false);
       render();
@@ -862,6 +978,7 @@
       state.selectedProjectId = projectId;
       state.selectedRoleId = roleId;
       state.confirmDeleteProjectId = null;
+      state.confirmDeleteUserKey = null;
       state.confirmReopenKey = null;
       saveState(true);
       render();
@@ -870,12 +987,39 @@
     function toggleRoleBinding(projectId, roleId) {
       const project = state.projects[projectId];
       if (!project || !isProjectActive(project)) return;
+      recordCurrentUserMeta();
       const userKey = getCurrentUserKey();
       const list = getBoundRolesForUser(state.userBoundRoles, userKey, projectId);
       const nextList = list.includes(roleId)
         ? list.filter((id) => id !== roleId)
         : [...list, roleId];
       state.userBoundRoles = setBoundRolesForUser(state.userBoundRoles, userKey, projectId, nextList);
+      saveState(true);
+      render();
+    }
+
+    function askRemoveUser(userKey) {
+      if (!state.leadUnlocked || !userKey) return;
+      state.confirmDeleteUserKey = userKey;
+      render();
+    }
+
+    function cancelRemoveUser() {
+      state.confirmDeleteUserKey = null;
+      render();
+    }
+
+    function confirmRemoveUser(userKey) {
+      if (!state.leadUnlocked || !userKey) return;
+      const nextBounds = normalizeUserBoundRoles(state.userBoundRoles);
+      delete nextBounds[userKey];
+      state.userBoundRoles = nextBounds;
+
+      const nextUsers = normalizeKnownUsers(state.knownUsers);
+      delete nextUsers[userKey];
+      state.knownUsers = nextUsers;
+
+      state.confirmDeleteUserKey = null;
       saveState(true);
       render();
     }
@@ -1081,10 +1225,8 @@
       const currentRoleDeps = project ? getRoleDeps(project, currentRole.id) : [];
       const canDeleteProject = projectList.length > 1 && Boolean(project);
 
-      const tgUser = window.Telegram?.WebApp?.initDataUnsafe?.user;
-      const userLabel = tgUser
-        ? `${tgUser.first_name || ""} (@${tgUser.username || tgUser.id})`
-        : "Локальный профиль";
+      const tgUser = getCurrentTgUser();
+      const userLabel = formatTgUserLabel(tgUser, "Локальный профиль");
 
       let html = `
         <div class="topbar">
@@ -1094,7 +1236,7 @@
           </div>
           <div class="mode-switch">
             <button class="btn-small" onclick="pullSharedState()" title="Обновить данные из Google Таблицы">↻ Обновить</button>
-            <button class="${state.mode === "member" ? "active" : ""}" onclick="state.mode='member'; state.showLeadAuthPrompt=false; state.confirmDeleteProjectId=null; state.confirmReopenKey=null; saveState(false); render();">Участник</button>
+            <button class="${state.mode === "member" ? "active" : ""}" onclick="state.mode='member'; state.showLeadAuthPrompt=false; state.confirmDeleteProjectId=null; state.confirmDeleteUserKey=null; state.confirmReopenKey=null; saveState(false); render();">Участник</button>
             <button class="${state.mode === "lead" ? "active" : ""}" onclick="openLeadTab()">${state.leadUnlocked ? "Руководство" : "🔒 Руководство"}</button>
             ${state.leadUnlocked ? `<button class="btn-small" onclick="lockLeadMode()">Заблокировать</button>` : ""}
           </div>
@@ -1440,6 +1582,46 @@
             `;
           });
         }
+
+        const members = getDirectoryMembers();
+        html += `
+          <div class="panel">
+            <div class="panel-head">
+              <span class="chapter-title">Участники и закреплённые роли</span>
+              <span class="badge">${members.length}</span>
+            </div>
+            <div class="sub" style="margin-bottom: 10px;">
+              Удаление профиля очищает все его закреплённые роли по всем проектам и обновляет Google Таблицу.
+            </div>
+            ${
+              members.length === 0
+                ? `<div class="sub">Пока нет записей о закреплённых ролях или профилях.</div>`
+                : members.map((m) => {
+                    const isAskingUserDelete = state.confirmDeleteUserKey === m.userKey;
+                    const escapedKey = m.userKey.replace(/'/g, "\\'");
+                    return `
+                      <div class="member-row">
+                        <div>
+                          <div style="font-size: 13px; font-weight: 600;">${m.label} <span class="sub">(${m.userKey})</span></div>
+                          <div class="sub">${m.perProject.length ? m.perProject.join(" · ") : "Ролей пока нет"}</div>
+                        </div>
+                        <div class="row">
+                          ${
+                            isAskingUserDelete
+                              ? `
+                                <span class="sub">Удалить?</span>
+                                <button class="btn-small btn-danger-solid" onclick="confirmRemoveUser('${escapedKey}')">Да</button>
+                                <button class="btn-small" onclick="cancelRemoveUser()">Нет</button>
+                              `
+                              : `<button class="btn-small btn-danger" onclick="askRemoveUser('${escapedKey}')">Удалить</button>`
+                          }
+                        </div>
+                      </div>
+                    `;
+                  }).join("")
+            }
+          </div>
+        `;
       }
 
       document.getElementById("app").innerHTML = html;
