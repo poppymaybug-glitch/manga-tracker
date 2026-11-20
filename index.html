@@ -380,6 +380,7 @@
 
     const PROJECT_STATUSES = {
       active: "В работе",
+      on_hold: "На перерыве",
       completed: "Завершено",
       dropped: "Брошено"
     };
@@ -416,6 +417,17 @@
           typeset: ["edit", "clean"],
           sound: ["translate", "clean"],
           beta: ["typeset", "sound"]
+        }
+      },
+      unrestricted: {
+        label: "Без привязки",
+        deps: {
+          clean: [],
+          translate: [],
+          edit: [],
+          sound: [],
+          typeset: [],
+          beta: []
         }
       }
     };
@@ -561,9 +573,10 @@
       Object.entries(source).forEach(([key, proj]) => {
         if (!proj) return;
         const wf = WORKFLOW_MODES[proj.workflowMode] ? proj.workflowMode : "classic";
+        const st = PROJECT_STATUSES[proj.status] ? proj.status : "active";
         normalized[key] = {
           ...proj,
-          status: proj.status || "active",
+          status: st,
           workflowMode: wf,
           chapters: Array.isArray(proj.chapters) ? proj.chapters : []
         };
@@ -685,11 +698,7 @@
           const mergedUserMap = normalizeUserBoundRoles(state.userBoundRoles);
 
           Object.entries(remoteUserMap).forEach(([uKey, projMap]) => {
-            if (uKey === userKey) {
-              mergedUserMap[uKey] = projMap;
-            } else {
-              mergedUserMap[uKey] = projMap;
-            }
+            mergedUserMap[uKey] = projMap;
           });
 
           state = normalizeLoadedState({
@@ -808,7 +817,7 @@
     function setProjectStatus(projectId, nextStatus) {
       if (!state.leadUnlocked) return;
       const project = state.projects[projectId];
-      if (!project) return;
+      if (!project || !PROJECT_STATUSES[nextStatus]) return;
       project.status = nextStatus;
       if (nextStatus !== "active") {
         project.chapters.forEach((c) => { c.isEditing = false; });
@@ -1018,7 +1027,7 @@
             </div>
             <div class="row">
               <span class="badge ${activeProject ? "ok" : "closed"}">Статус: ${statusLabel}</span>
-              <span class="badge">Порядок: ${workflow.label}</span>
+              <span class="badge">Режим: ${workflow.label}</span>
               <span class="sub">${project.note}</span>
             </div>
           </div>
@@ -1127,6 +1136,7 @@
                   <span class="label-inline">Статус:</span>
                   <select onchange="setProjectStatus('${project.id}', this.value)">
                     <option value="active" ${(project.status || "active") === "active" ? "selected" : ""}>В работе</option>
+                    <option value="on_hold" ${project.status === "on_hold" ? "selected" : ""}>На перерыве</option>
                     <option value="completed" ${project.status === "completed" ? "selected" : ""}>Завершено</option>
                     <option value="dropped" ${project.status === "dropped" ? "selected" : ""}>Брошено</option>
                   </select>
@@ -1141,7 +1151,7 @@
               </div>
 
               <div class="row" style="margin-bottom: 10px;">
-                <span class="label-inline">Порядок звука и тайпа:</span>
+                <span class="label-inline">Режим этапов:</span>
                 <select ${!activeProject ? "disabled" : ""} onchange="setProjectWorkflowMode('${project.id}', this.value)">
                   ${Object.entries(WORKFLOW_MODES).map(([key, cfg]) => `
                     <option value="${key}" ${(project.workflowMode || "classic") === key ? "selected" : ""}>${cfg.label}</option>
